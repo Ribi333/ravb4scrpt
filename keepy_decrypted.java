@@ -15,6 +15,10 @@ int[] blockInfo;
 String side;
 float[] crots;
 
+void onLoad() {
+    modules.registerButton("Swing", true);
+}
+
 void onEnable() {
     towering = false;
     oldSlot = inventory.getSlot();
@@ -62,6 +66,7 @@ void onPreUpdate() {
 
     if (client.getPlayer().onGround() && client.isMoving() && !modules.isEnabled("Bhop") && !modules.isEnabled("Bhop2")) {
         client.setSprinting(true);
+        client.setSpeed(0.1785);
         client.jump();
         
     } 
@@ -344,7 +349,13 @@ void place() {
     targetBlock = new Vec3(blockX, blockY, blockZ);
 
     client.placeBlock(targetBlock, side, hitVec);
-    client.swing();
+    if (!modules.getButton(scriptName, "Swing")) {
+        modules.setButton("Scaffold", "Silent swing", true);
+        client.sendPacket(new C0A());
+    } else {
+        client.swing();
+        modules.setButton("Scaffold", "Silent swing", false);
+    }
 }
 
 float getDirection() {
