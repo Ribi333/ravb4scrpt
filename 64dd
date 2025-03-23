@@ -1,4 +1,4 @@
-    private void getInteractC5(double distance, boolean swung) {
+    private void getInteractB2(double distance, boolean swung) {
         if (interactTicks >= 3) {
             interactTicks = 0;
         }
@@ -19,8 +19,6 @@
                     }
                     handleInteractAndAttack(distance, true, true, swung);
                     sendBlockPacket();
-                    Reflection.setItemInUse(this.blockingClient = true);
-                    //ScriptDefaults.client.print("block packet first cycle");
                     releasePackets(); // release
                     interactTicks = 0;
                     ++firstEdge;
@@ -31,6 +29,10 @@
                     break;
             }
         }
+
+
+
+
         else {
             switch (interactTicks) {
                 case 1:
@@ -47,8 +49,6 @@
                     }
                     handleInteractAndAttack(distance, true, true, swung);
                     sendBlockPacket();
-                    Reflection.setItemInUse(this.blockingClient = true);
-                    //ScriptDefaults.client.print("block packet second cycle");
                     releasePackets(); // release
                     break;
                 case 3:
