@@ -52,7 +52,7 @@ public class LongJump extends Module {
     private KeySetting verticalKey;
     private SliderSetting pitchVal;
 
-    public String[] modes = new String[]{"Float", "Boost"};
+    public String[] modes = new String[]{"Float", "Boost", "Flat"};
 
     private boolean manualWasOn;
 
@@ -108,7 +108,6 @@ public class LongJump extends Module {
 
         this.registerSetting(beginFlat = new ButtonSetting("Begin flat", false));
         this.registerSetting(verticalKey = new KeySetting("Vertical key", Keyboard.KEY_SPACE));
-        this.registerSetting(flatKey = new KeySetting("Flat key", Keyboard.KEY_SPACE));
     }
 
     public void guiUpdate() {
@@ -123,7 +122,6 @@ public class LongJump extends Module {
         this.motionDecay.setVisible(mode.getInput() == 0, this);
         this.beginFlat.setVisible(mode.getInput() == 0, this);
         this.verticalKey.setVisible(mode.getInput() == 0 && beginFlat.isToggled(), this);
-        this.flatKey.setVisible(mode.getInput() == 0 && !beginFlat.isToggled(), this);
     }
 
     public void onEnable() {
@@ -228,9 +226,25 @@ public class LongJump extends Module {
         } else {
             motionDecayVal = (int) motionDecay.getInput();
         }
+
         if (stopTime == -1 && ++boostTicks > (!verticalKey() ? 33/*flat motion ticks*/ : (!notMoving ? 32/*normal motion ticks*/ : 33/*vertical motion ticks*/))) {
             disabled();
             return;
+        }
+
+        if (mode.getInput() == 2 && function) {
+            if (boostTicks > 0 && boostTicks < 30) {
+                mc.thePlayer.motionY = 0.01;
+
+                if (mc.thePlayer.hurtTime == 9 && mc.thePlayer.moveForward > 0) {
+                    Utils.setSpeed(1.6);
+                } else if (mc.thePlayer.hurtTime == 8 && mc.thePlayer.moveForward > 0) {
+                    Utils.setSpeed(1.6);
+                }
+            } else if (boostTicks >= 30) {
+                disabled();
+                return;
+            }
         }
 
         if (fireballTime > 0 && (System.currentTimeMillis() - fireballTime) > FIREBALL_TIMEOUT) {
@@ -238,6 +252,7 @@ public class LongJump extends Module {
             disabled();
             return;
         }
+
         if (boostTicks > 0) {
             if (mode.getInput() == 0) {
                 modifyVertical(); // has to be onPreUpdate
@@ -476,6 +491,11 @@ public class LongJump extends Module {
     }
 
     private void modifyVertical() {
+        if (mode.getInput() == 2) {
+            mc.thePlayer.motionY = 0.01;
+            return;
+        }
+
         if (verticalMotion.getInput() != 0) {
             double ver = ((!notMoving ? verticalMotion.getInput() : 1.16 /*vertical*/) * (1.0 / (1.0 + (0.05 * getSpeedLevel())))) + Utils.randomizeDouble(0.0001, 0.1);
             double decay = motionDecay.getInput() / 1000;
@@ -496,7 +516,7 @@ public class LongJump extends Module {
 
     private boolean verticalKey() {
         if (notMoving) return true;
-        return beginFlat.isToggled() ? verticalKey.isPressed() : !flatKey.isPressed();
+        return beginFlat.isToggled() ? verticalKey.isPressed() : true;
     }
 
     private int getKeyCode(String keyName) {
