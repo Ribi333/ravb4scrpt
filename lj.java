@@ -1,472 +1,303 @@
 package keystrokesmod.module.impl.movement;
 
 import keystrokesmod.Raven;
-import keystrokesmod.event.PrePlayerInputEvent;
 import keystrokesmod.event.*;
-import keystrokesmod.mixin.impl.accessor.IAccessorMinecraft;
-import keystrokesmod.mixin.interfaces.IMixinItemRenderer;
+import keystrokesmod.mixin.impl.accessor.IAccessorItemFood;
 import keystrokesmod.module.Module;
 import keystrokesmod.module.ModuleManager;
-import keystrokesmod.module.impl.render.HUD;
+import keystrokesmod.module.impl.player.Safewalk;
 import keystrokesmod.module.setting.impl.ButtonSetting;
-import keystrokesmod.module.setting.impl.KeySetting;
+import keystrokesmod.module.setting.impl.DescriptionSetting;
 import keystrokesmod.module.setting.impl.SliderSetting;
 import keystrokesmod.utility.*;
-import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.block.*;
+import net.minecraft.client.settings.KeyBinding;
+import net.minecraft.enchantment.Enchantment;
+import net.minecraft.enchantment.EnchantmentHelper;
+import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.init.Items;
-import net.minecraft.item.ItemStack;
-import net.minecraft.network.Packet;
+import net.minecraft.item.*;
+import net.minecraft.network.play.client.C02PacketUseEntity;
+import net.minecraft.network.play.client.C07PacketPlayerDigging;
 import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.network.play.client.C09PacketHeldItemChange;
-import net.minecraft.network.play.client.C0APacketAnimation;
-import net.minecraft.network.play.server.*;
 import net.minecraft.potion.PotionEffect;
+import net.minecraft.util.BlockPos;
+import net.minecraftforge.client.event.MouseEvent;
 import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import net.minecraftforge.fml.common.gameevent.TickEvent;
-import org.lwjgl.input.Keyboard;
+import org.lwjgl.input.Mouse;
 
-import java.awt.*;
+public class NoSlow extends Module {
+    public SliderSetting mode;
+    public static SliderSetting slowed;
+    public static ButtonSetting disableBow;
+    public static ButtonSetting disablePotions;
+    public static ButtonSetting swordOnly;
+    public static ButtonSetting vanillaSword;
+    private String[] modes = new String[]{"Vanilla", "Pre", "Post", "Alpha", "Float"};
+    private boolean postPlace;
+    public static boolean canFloat;
+    private boolean reSendConsume, requireJump;
+    public static boolean noSlowing, offset, fix;
+    private int ticksOffStairs = 30;
+    private boolean setCancelled, didC;
+    private int grounded, offsetDelay;
 
-public class LongJump extends Module {
-    private SliderSetting mode;
-
-    private SliderSetting boostSetting;
-    private SliderSetting motionTicks;
-    private SliderSetting verticalMotion;
-    private SliderSetting motionDecay;
-
-    private ButtonSetting manual;
-    private ButtonSetting onlyWithVelocity;
-    private KeySetting disableKey, flatKey;
-
-    private ButtonSetting allowStrafe;
-    private ButtonSetting invertYaw;
-    private ButtonSetting stopMovement;
-    private ButtonSetting hideExplosion;
-    public ButtonSetting spoofItem;
-    private ButtonSetting beginFlat;
-    private ButtonSetting silentSwing;
-    private ButtonSetting renderFloatProgress;
-
-    private KeySetting verticalKey;
-    private SliderSetting pitchVal;
-
-    public String[] modes = new String[]{"Float", "Boost", "Flat"};
-
-    private boolean manualWasOn;
-
-    private float yaw;
-    private float pitch;
-
-    private boolean notMoving;
-    private boolean enabled, swapped;
-    public static boolean function;
-
-    private int boostTicks;
-    public int lastSlot = -1, spoofSlot = -1;
-    private int stopTime;
-    private int rotateTick;
-    private int motionDecayVal;
-
-    private long fireballTime;
-    private long MAX_EXPLOSION_DIST_SQ = 9;
-    private long FIREBALL_TIMEOUT = 750L;
-
-    public static boolean stopVelocity;
-    public static boolean stopModules;
-    public static boolean slotReset;
-    public static int slotResetTicks;
-
-    private int firstSlot = -1;
-
-    private int color = new Color(0, 187, 255, 255).getRGB();
-    private float barWidth = 60;
-    private float barHeight = 4;
-    private float filledWidth;
-    private float barX;
-    private float barY;
-
-    public LongJump() {
-        super("Long Jump", category.movement);
+    public NoSlow() {
+        super("NoSlow", category.movement, 0);
+        this.registerSetting(new DescriptionSetting("Default is 80% motion reduction."));
         this.registerSetting(mode = new SliderSetting("Mode", 0, modes));
-
-        this.registerSetting(manual = new ButtonSetting("Manual", false));
-        this.registerSetting(onlyWithVelocity = new ButtonSetting("Only while velocity enabled", false));
-        this.registerSetting(disableKey = new KeySetting("Disable key", Keyboard.KEY_SPACE));
-
-        this.registerSetting(boostSetting = new SliderSetting("Horizontal boost", 1.7, 0.0, 2.0, 0.05));
-        this.registerSetting(verticalMotion = new SliderSetting("Vertical motion", 0, 0.4, 0.9, 0.01));
-        this.registerSetting(motionDecay = new SliderSetting("Motion decay", 17, 1, 40, 1));
-        this.registerSetting(allowStrafe = new ButtonSetting("Allow strafe", false));
-        this.registerSetting(invertYaw = new ButtonSetting("Invert yaw", true));
-        this.registerSetting(stopMovement = new ButtonSetting("Stop movement", false));
-        this.registerSetting(hideExplosion = new ButtonSetting("Hide explosion", false));
-        this.registerSetting(spoofItem = new ButtonSetting("Spoof item", false));
-        this.registerSetting(silentSwing = new ButtonSetting("Silent swing", false));
-        this.registerSetting(renderFloatProgress = new ButtonSetting("Render float progress", false));
-
-        this.registerSetting(beginFlat = new ButtonSetting("Begin flat", false));
-        this.registerSetting(verticalKey = new KeySetting("Vertical key", Keyboard.KEY_SPACE));
+        this.registerSetting(slowed = new SliderSetting("Slow %", 80.0D, 0.0D, 80.0D, 1.0D));
+        this.registerSetting(disableBow = new ButtonSetting("Disable bow", false));
+        this.registerSetting(disablePotions = new ButtonSetting("Disable potions", false));
+        this.registerSetting(swordOnly = new ButtonSetting("Sword only", false));
+        this.registerSetting(vanillaSword = new ButtonSetting("Vanilla sword", false));
     }
 
-    public void guiUpdate() {
-        this.onlyWithVelocity.setVisible(manual.isToggled(), this);
-        this.disableKey.setVisible(manual.isToggled(), this);
-        this.spoofItem.setVisible(!manual.isToggled(), this);
-        this.silentSwing.setVisible(!manual.isToggled(), this);
-
-        this.renderFloatProgress.setVisible(mode.getInput() == 0, this);
-
-        this.verticalMotion.setVisible(mode.getInput() == 0, this);
-        this.motionDecay.setVisible(mode.getInput() == 0, this);
-        this.beginFlat.setVisible(mode.getInput() == 0, this);
-        this.verticalKey.setVisible(mode.getInput() == 0 && beginFlat.isToggled(), this);
-    }
-
-    public void onEnable() {
-        if (ModuleUtils.profileTicks <= 1) {
-            return;
-        }
-        if (!manual.isToggled()) {
-            if (Utils.getTotalHealth(mc.thePlayer) <= 3) {
-                Utils.sendMessage("&cPrevented throwing fireball due to low health");
-                disable();
-                return;
-            }
-            enabled();
-        }
-        filledWidth = 0;
-        final ScaledResolution scaledResolution = new ScaledResolution(mc);
-        int[] disp = {scaledResolution.getScaledWidth(), scaledResolution.getScaledHeight(), scaledResolution.getScaleFactor()};
-        barX = disp[0] / 2 - barWidth / 2;
-        barY = disp[1] / 2 + 12;
-    }
-
+    @Override
     public void onDisable() {
-        disabled();
+        resetFloat();
     }
 
-    /*public boolean onChat(String chatMessage) {
-        String msg = util.strip(chatMessage);
-
-        if (msg.equals("Build height limit reached!")) {
-            client.print("fb fly build height");
-            modules.disable(scriptName);
-            return false;
-        }
-        return true;
-    }*/
-
-    @SubscribeEvent
-    public void onPreUpdate(PreUpdateEvent e) {
-        if (manual.isToggled()) {
-            manualWasOn = true;
-        }
-        else {
-            if (manualWasOn) {
-                disabled();
-            }
-            manualWasOn = false;
-        }
-
-        if (manual.isToggled() && disableKey.isPressed() && Utils.jumpDown()) {
-            function = false;
-            disabled();
-        }
-
-        if (spoofItem.isToggled() && lastSlot != -1 && !manual.isToggled()) {
-            ((IMixinItemRenderer) mc.getItemRenderer()).setCancelUpdate(true);
-            ((IMixinItemRenderer) mc.getItemRenderer()).setCancelReset(true);
-        }
-
-        if (swapped && rotateTick == 0) {
-            resetSlot();
-            swapped = false;
-        }
-
-        if (!function) {
-            if (manual.isToggled() && !enabled && (!onlyWithVelocity.isToggled() || onlyWithVelocity.isToggled() && ModuleManager.velocity.isEnabled())) {
-                if (ModuleUtils.threwFireballLow) {
-                    ModuleManager.velocity.disableVelo = true;
-                    enabled();
-                }
-            }
+    public void onUpdate() {
+        if (ModuleManager.bedAura.stopAutoblock) {
             return;
         }
-
-        if (enabled) {
-            if (!Utils.isMoving()) notMoving = true;
-            if (boostSetting.getInput() == 0 && verticalMotion.getInput() == 0) {
-                Utils.print("&cValues are set to 0!");
-                disabled();
-                return;
-            }
-            int fireballSlot = setupFireballSlot(true);
-            if (fireballSlot != -1) {
-                if (!manual.isToggled()) {
-                    lastSlot = spoofSlot = mc.thePlayer.inventory.currentItem;
-                    if (mc.thePlayer.inventory.currentItem != fireballSlot) {
-                        mc.thePlayer.inventory.currentItem = fireballSlot;
-                        swapped = true;
-                    }
-
-                }
-                //("Set fireball slot");
-                rotateTick = 1;
-                if (stopMovement.isToggled()) {
-                    stopTime = 1;
-                }
-            } // auto disables if -1
-            enabled = false;
-        }
-
-        if (notMoving) {
-            motionDecayVal = 21;
-        } else {
-            motionDecayVal = (int) motionDecay.getInput();
-        }
-
-        if (stopTime == -1 && ++boostTicks > (!verticalKey() ? 33/*flat motion ticks*/ : (!notMoving ? 32/*normal motion ticks*/ : 33/*vertical motion ticks*/))) {
-            disabled();
+        postPlace = false;
+        if (vanillaSword.isToggled() && Utils.holdingSword()) {
             return;
         }
-
-        if (mode.getInput() == 2 && function) {
-            if (boostTicks > 0 && boostTicks < 30) {
-                mc.thePlayer.motionY = 0.01;
-
-                if (mc.thePlayer.hurtTime == 9 && mc.thePlayer.moveForward > 0) {
-                    Utils.setSpeed(1.6);
-                } else if (mc.thePlayer.hurtTime == 8 && mc.thePlayer.moveForward > 0) {
-                    Utils.setSpeed(1.6);
-                }
-            } else if (boostTicks >= 30) {
-                disabled();
-                return;
-            }
-        }
-
-        if (fireballTime > 0 && (System.currentTimeMillis() - fireballTime) > FIREBALL_TIMEOUT) {
-            Utils.print("&cFireball timed out.");
-            disabled();
+        boolean apply = getSlowed() != 0.2f;
+        if (!apply || !mc.thePlayer.isUsingItem()) {
             return;
         }
-
-        if (boostTicks > 0) {
-            if (mode.getInput() == 0) {
-                modifyVertical(); // has to be onPreUpdate
-            }
-            //Utils.print("Modifying vertical");
-            if (allowStrafe.isToggled() && boostTicks < 32) {
-                Utils.setSpeed(Utils.getHorizontalSpeed(mc.thePlayer));
-                //Utils.print("Speed");
-            }
-        }
-
-        filledWidth = (barWidth * boostTicks / (!notMoving ? 32 : 33));
-
-        if (stopMovement.isToggled() && !notMoving) {
-            if (stopTime > 0) {
-                ++stopTime;
-            }
-        }
-
-        if (mc.thePlayer.onGround && boostTicks > 2) {
-            disabled();
-        }
-
-        if (firstSlot != -1) {
-            mc.thePlayer.inventory.currentItem = firstSlot;
+        switch ((int) mode.getInput()) {
+            case 1:
+                if (mc.thePlayer.ticksExisted % 3 == 0 && !Raven.packetsHandler.C07.get()) {
+                    mc.thePlayer.sendQueue.addToSendQueue(new C08PacketPlayerBlockPlacement(mc.thePlayer.getHeldItem()));
+                }
+                break;
+            case 2:
+                postPlace = true;
+                break;
+            case 3:
+                if (mc.thePlayer.ticksExisted % 3 == 0 && !Raven.packetsHandler.C07.get()) {
+                    mc.thePlayer.sendQueue.addToSendQueue(new C08PacketPlayerBlockPlacement(new BlockPos(-1, -1, -1), 1, null, 0, 0, 0));
+                }
+                break;
+            case 4:
+                //
+                break;
         }
     }
 
     @SubscribeEvent
-    public void onRenderTick(TickEvent.RenderTickEvent ev) {
-        if (!Utils.nullCheck()) {
-            return;
-        }
-        if (ev.phase == TickEvent.Phase.END) {
-            if (mc.currentScreen != null || !renderFloatProgress.isToggled() || mode.getInput() != 0) {
-                return;
+    public void onPostMotion(PostMotionEvent e) {
+        if (postPlace && mode.getInput() == 2) {
+            if (mc.thePlayer.ticksExisted % 3 == 0 && !Raven.packetsHandler.C07.get()) {
+                mc.thePlayer.sendQueue.addToSendQueue(new C08PacketPlayerBlockPlacement(mc.thePlayer.getHeldItem()));
             }
-        }
-        color = Theme.getGradient((int) HUD.theme.getInput(), 0);
-        RenderUtils.drawRoundedRectangle(barX, barY, barX + barWidth, barY + barHeight, 3, 0xFF555555);
-        RenderUtils.drawRoundedRectangle(barX, barY, barX + filledWidth, barY + barHeight, 3, color);
-    }
-
-    @SubscribeEvent
-    public void onSlotUpdate(SlotUpdateEvent e) {
-        if (lastSlot != -1) {
-            spoofSlot = e.slot;
-        }
-    }
-
-    @SubscribeEvent(priority = EventPriority.LOWEST)
-    public void onPreMotion(PreMotionEvent e) {
-        if (!Utils.nullCheck()) {
-            return;
-        }
-        if (rotateTick >= 3) {
-            rotateTick = 0;
-        }
-        if (rotateTick >= 1) {
-            if ((invertYaw.isToggled() || stopMovement.isToggled()) && !notMoving) {
-                if (!stopMovement.isToggled()) {
-                    yaw = mc.thePlayer.rotationYaw - 180f;
-                    pitch = 90f;
-                } else {
-                    yaw = mc.thePlayer.rotationYaw - 180f;
-                    pitch = 66.3f;//(float) pitchVal.getInput();
-                }
-            } else {
-                yaw = mc.thePlayer.rotationYaw;
-                pitch = 90f;
-            }
-            e.setRotations(yaw, pitch);
-        }
-        if (rotateTick > 0 && ++rotateTick >= 3) {
-            int fireballSlot = setupFireballSlot(false);
-            if (fireballSlot != -1) {
-                fireballTime = System.currentTimeMillis();
-                if (!manual.isToggled()) {
-                    mc.getNetHandler().addToSendQueue(new C08PacketPlayerBlockPlacement(mc.thePlayer.getHeldItem()));
-                    if (silentSwing.isToggled()) {
-                        mc.thePlayer.sendQueue.addToSendQueue(new C0APacketAnimation());
-                    }
-                    else {
-                        mc.thePlayer.swingItem();
-                        if (!spoofItem.isToggled()) {
-                            mc.getItemRenderer().resetEquippedProgress();
-                        }
-                    }
-                }
-                stopVelocity = true;
-                //Utils.print("Right click");
-            }
-        }
-        if (boostTicks == 1) {
-            if (invertYaw.isToggled()) {
-                //client.setMotion(client.getMotion().x, client.getMotion().y + 0.035d, client.getMotion().z);
-            }
-            modifyHorizontal();
-            stopVelocity = false;
-            if (!manual.isToggled() && !allowStrafe.isToggled() && mode.getInput() == 1) {
-                disabled();
-            }
-        }
-    }
-
-    @SubscribeEvent(priority = EventPriority.LOWEST) // called last in order to apply fix
-    public void onMoveInput(PrePlayerInputEvent e) {
-        if (!function) {
-            return;
-        }
-        mc.thePlayer.movementInput.jump = false;
-        if (rotateTick > 0 || fireballTime > 0) {
-            if (Utils.isMoving()) e.setForward(1);
-            e.setStrafe(0);
-        }
-        if (notMoving && boostTicks < 3) {
-            e.setForward(0);
-            e.setStrafe(0);
-            Utils.setSpeed(0);
-        }
-        if (stopMovement.isToggled() && !notMoving && stopTime >= 1) {
-            e.setForward(0);
-            e.setStrafe(0);
-            Utils.setSpeed(0);
+            postPlace = false;
         }
     }
 
     @SubscribeEvent
-    public void onReceivePacket(ReceivePacketEvent e) {
-        if (!function) {
-            return;
-        }
-        Packet packet = e.getPacket();
-        if (packet instanceof S27PacketExplosion) {
-            S27PacketExplosion s27 = (S27PacketExplosion) packet;
-            if (fireballTime == 0 || mc.thePlayer.getPosition().distanceSq(s27.getX(), s27.getY(), s27.getZ()) > MAX_EXPLOSION_DIST_SQ) {
-                e.setCanceled(true);
-                //Utils.print("0 fb time / out of dist");
-            }
+    public void onPostPlayerInput(PostPlayerInputEvent e) {
+        handleFloatSetup();
+    }
 
-            stopTime = -1;
-            fireballTime = 0;
-            resetSlot();
-            boostTicks = 0; // +1 on next pre update
-            //Utils.print("set start vals");
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void onMouse(MouseEvent e) {
+        handleFloatSetup();
 
-            //client.print(client.getPlayer().getTicksExisted() + " s27 " + boostTicks + " " + client.getPlayer().getHurtTime() + " " + client.getPlayer().getSpeed());
-        } else if (packet instanceof S08PacketPlayerPosLook) {
-            Utils.print("&cReceived setback, disabling.");
-            disabled();
-        }
-
-        if (hideExplosion.isToggled() && fireballTime != 0 && (packet instanceof S0EPacketSpawnObject || packet instanceof S2APacketParticles || packet instanceof S29PacketSoundEffect)) {
+        if (setCancelled && e.button == 1) {
+            setCancelled = false;
             e.setCanceled(true);
         }
     }
 
-    private int getFireballSlot() {
-        int n = -1;
-        for (int i = 0; i < 9; ++i) {
-            final ItemStack getStackInSlot = mc.thePlayer.inventory.getStackInSlot(i);
-            if (getStackInSlot != null && getStackInSlot.getItem() == Items.fire_charge) {
-                n = i;
-                break;
+    private void handleFloatSetup() {
+        if (mode.getInput() != 4 || canFloat || reSendConsume || requireJump || getSlowed() == 0.2f || BlockUtils.isInteractable(mc.objectMouseOver) || !Utils.tabbedIn()) {
+            return;
+        }
+        if (!Mouse.isButtonDown(1) || (mc.thePlayer.getHeldItem() == null || !holdingConsumable(mc.thePlayer.getHeldItem()))) {
+            return;
+        }
+        if (!mc.thePlayer.onGround || ModuleManager.sprint.sprintFloat) {
+            canFloat = true;
+        }
+        else {
+            KeyBinding.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), false);
+            setCancelled = true;
+            if (!Utils.jumpDown() && !ModuleManager.bhop.isEnabled()) {
+                mc.thePlayer.jump();
+            }
+            reSendConsume = true;
+            canFloat = false;
+        }
+    }
+
+    @SubscribeEvent
+    public void onSendPacket(SendPacketEvent e) {
+        if (!Utils.nullCheck()) {
+            return;
+        }
+
+        if (e.getPacket() instanceof C08PacketPlayerBlockPlacement) {
+            if (mode.getInput() != 4 || canFloat || reSendConsume || requireJump || getSlowed() == 0.2f || BlockUtils.isInteractable(mc.objectMouseOver) || !Utils.tabbedIn()) {
+                return;
+            }
+            if (!Mouse.isButtonDown(1) || (mc.thePlayer.getHeldItem() == null || !holdingConsumable(mc.thePlayer.getHeldItem()))) {
+                return;
+            }
+            e.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
+    public void onPreMotion(PreMotionEvent e) {
+        /*Block blockBelow = BlockUtils.getBlock(new BlockPos(mc.thePlayer.posX, mc.thePlayer.posY - 1, mc.thePlayer.posZ));
+        Block block = BlockUtils.getBlock(new BlockPos(mc.thePlayer.posX, mc.thePlayer.posY, mc.thePlayer.posZ));
+        if (block instanceof BlockStairs || block instanceof BlockSlab && ModuleUtils.lastTickOnGround && ModuleUtils.lastTickPos1) {
+            ticksOffStairs = 0;
+        }
+        else {
+            ticksOffStairs++;
+        }*/
+
+        if (ModuleUtils.inAirTicks > 1) {
+            requireJump = false;
+        }
+        if (ModuleManager.bedAura.stopAutoblock || mode.getInput() != 4) {
+            resetFloat();
+            return;
+        }
+        postPlace = false;
+        if (!Mouse.isButtonDown(1) || (mc.thePlayer.getHeldItem() == null || !holdingConsumable(mc.thePlayer.getHeldItem()))) {
+            if (mc.thePlayer.getHeldItem() != null && holdingConsumable(mc.thePlayer.getHeldItem())) {
+                KeyBinding.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), false);
+            }
+            resetFloat();
+            return;
+        }
+        if (!floatConditions()) {
+            grounded = 0;
+            didC = true;
+            requireJump = true;
+        }
+        else if (didC) {
+            grounded++;
+            if (grounded > 30) {
+                fix = true;
             }
         }
-        return n;
-    }
-
-    private void enabled() {
-        slotReset = false;
-        slotResetTicks = 0;
-        enabled = function = true;
-
-        stopModules = true;
-    }
-
-    private void disabled() {
-        fireballTime = rotateTick = stopTime = 0;
-        boostTicks = -1;
-        resetSlot();
-        enabled = function = notMoving = stopVelocity = stopModules = swapped = false;
-        if (!manual.isToggled()) {
-            disable();
-        }
-    }
-
-    private int setupFireballSlot(boolean pre) {
-        // only cancel bad packet right click on the tick we are sending it
-        int fireballSlot = getFireballSlot();
-        if (fireballSlot == -1) {
-            Utils.print("&cFireball not found.");
-            disabled();
-        } else if ((pre && Utils.distanceToGround(mc.thePlayer) > 3)/* || (!pre && !PacketUtil.canRightClickItem())*/) { //needs porting
-            Utils.print("&cCan't throw fireball right now.");
-            disabled();
-            fireballSlot = -1;
-        }
-        return fireballSlot;
-    }
-
-    private void resetSlot() {
-        if (lastSlot != -1 && !manual.isToggled()) {
-            mc.thePlayer.inventory.currentItem = lastSlot;
-            lastSlot = -1;
-            spoofSlot = -1;
-            firstSlot = -1;
-            if (spoofItem.isToggled()) {
-                ((IMixinItemRenderer) mc.getItemRenderer()).setCancelUpdate(false);
-                ((IMixinItemRenderer) mc.getItemRenderer()).setCancelReset(false);
+        if (reSendConsume) {
+            if (ModuleUtils.inAirTicks > 1) {
+                KeyBinding.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), true);
+                reSendConsume = false;
+                canFloat = true;
             }
         }
-        slotReset = true;
-        stopModules = false;
+        noSlowing = true;
+
+        if (requireJump) {
+            offset = false;
+            return;
+        }
+        if (!canFloat) {
+            return;
+        }
+        /*if (!reSendConsume && offsetDelay <= 2) {
+            ++offsetDelay;
+            return;
+        }*/
+        offset = true;
+        e.setPosY(e.getPosY() + ModuleUtils.offsetValue);
+        ModuleUtils.groundTicks = 0;
+        ModuleManager.scaffold.offsetDelay = 2;
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOWEST) // called last in order to apply fix
+    public void onMoveInput(PrePlayerInputEvent e) {
+        if (mode.getInput() == 4 && getSlowed() != 0.2f && !canFloat) {
+            mc.thePlayer.movementInput.jump = false;
+        }
+    }
+
+    public static float getSlowed() {
+        float val = (100.0F - (float) slowed.getInput()) / 100.0F;
+        if (mc.thePlayer.getHeldItem() == null || ModuleManager.noSlow == null || !ModuleManager.noSlow.isEnabled()) {
+            return 0.2f;
+        }
+        else {
+            if (swordOnly.isToggled() && !(mc.thePlayer.getHeldItem().getItem() instanceof ItemSword)) {
+                return 0.2f;
+            }
+            if (mc.thePlayer.getHeldItem().getItem() instanceof ItemBow && disableBow.isToggled()) {
+                return 0.2f;
+            }
+            else if (mc.thePlayer.getHeldItem().getItem() instanceof ItemPotion && !ItemPotion.isSplash(mc.thePlayer.getHeldItem().getItemDamage()) && disablePotions.isToggled()) {
+                return 0.2f;
+            }
+            else if (fix) {
+                return 0.2f;
+            }
+            else if (ModuleManager.killAura.blocked) {
+                return val;
+            }
+        }
+        return val;
+    }
+
+    private boolean floatConditions() {
+        Block block = BlockUtils.getBlock(new BlockPos(mc.thePlayer.posX, mc.thePlayer.posY, mc.thePlayer.posZ));
+        int edge = (int) Math.round((mc.thePlayer.posY % 1.0D) * 100.0D);
+        if (mc.thePlayer.posY % 1 == 0) {
+            return true;
+        }
+        if (edge < 10) {
+            return true;
+        }
+        if (!mc.thePlayer.onGround) {
+            return true;
+        }
+        if (block instanceof BlockSnow) {
+            return true;
+        }
+        if (block instanceof BlockCarpet) {
+            return true;
+        }
+        if (block instanceof BlockSlab) {
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public String getInfo() {
+        return modes[(int) mode.getInput()];
+    }
+
+    private void resetFloat() {
+        reSendConsume = canFloat = noSlowing = offset = didC = fix = requireJump = false;
+        grounded = offsetDelay = 0;
+    }
+
+    public static boolean hasArrows(ItemStack stack) {
+        final boolean flag = mc.thePlayer.capabilities.isCreativeMode || EnchantmentHelper.getEnchantmentLevel(Enchantment.infinity.effectId, stack) > 0;
+        return flag || mc.thePlayer.inventory.hasItem(Items.arrow);
+    }
+
+    double[] floatSpeedLevels = {0.2, 0.23, 0.28, 0.32, 0.37};
+
+    double getFloatSpeed(int speedLevel) {
+        double min = 0;
+        if (mc.thePlayer.moveStrafing != 0 && mc.thePlayer.moveForward != 0) min = 0.003;
+        if (speedLevel >= 0) {
+            return floatSpeedLevels[speedLevel] - min;
+        }
+        return floatSpeedLevels[0] - min;
     }
 
     private int getSpeedLevel() {
@@ -479,127 +310,20 @@ public class LongJump extends Module {
         return 0;
     }
 
-    // only apply horizontal boost once
-    void modifyHorizontal() {
-        if (boostSetting.getInput() != 0) {
-
-            double speed = boostSetting.getInput() - Utils.randomizeDouble(0.0001, 0);
-            if (Utils.isMoving()) {
-                Utils.setSpeed(speed);
-            }
+    private boolean holdingConsumable(ItemStack itemStack) {
+        Item heldItem = itemStack.getItem();
+        if (heldItem instanceof ItemFood || heldItem instanceof ItemBow && hasArrows(itemStack) || (heldItem instanceof ItemPotion && !ItemPotion.isSplash(mc.thePlayer.getHeldItem().getItemDamage())) || (heldItem instanceof ItemSword && !vanillaSword.isToggled())) {
+            return true;
         }
+        return false;
     }
 
-    private void modifyVertical() {
-        if (mode.getInput() == 2) {
-            mc.thePlayer.motionY = 0.01;
-            return;
-        }
 
-        if (verticalMotion.getInput() != 0) {
-            double ver = ((!notMoving ? verticalMotion.getInput() : 1.16 /*vertical*/) * (1.0 / (1.0 + (0.05 * getSpeedLevel())))) + Utils.randomizeDouble(0.0001, 0.1);
-            double decay = motionDecay.getInput() / 1000;
-            if (boostTicks > 1 && !verticalKey()) {
-                if (boostTicks > 1 || boostTicks <= (!notMoving ? 32/*horizontal motion ticks*/ : 33/*vertical motion ticks*/)) {
-                    mc.thePlayer.motionY = Utils.randomizeDouble(0.0101, 0.01);
-                }
-            } else {
-                if (boostTicks >= 1 && boostTicks <= (!notMoving ? 32/*horizontal motion ticks*/ : 33/*vertical motion ticks*/)) {
-                    mc.thePlayer.motionY = ver - boostTicks * decay;
-                } else if (boostTicks >= (!notMoving ? 32/*horizontal motion ticks*/ : 33/*vertical motion ticks*/) + 3) {
-                    mc.thePlayer.motionY = mc.thePlayer.motionY + 0.028;
-                    Utils.print("?");
-                }
-            }
+    public static boolean holdingEdible(ItemStack stack) {
+        if (stack.getItem() instanceof ItemFood && mc.thePlayer.getFoodStats().getFoodLevel() == 20) {
+            ItemFood food = (ItemFood) stack.getItem();
+            return ((IAccessorItemFood) food).getAlwaysEdible();
         }
-    }
-
-    private boolean verticalKey() {
-        if (notMoving) return true;
-        return beginFlat.isToggled() ? verticalKey.isPressed() : true;
-    }
-
-    private int getKeyCode(String keyName) {
-        switch (keyName) {
-            case "0": return 11;
-            case "1": return 2;
-            case "2": return 3;
-            case "3": return 4;
-            case "4": return 5;
-            case "5": return 6;
-            case "6": return 7;
-            case "7": return 8;
-            case "8": return 9;
-            case "9": return 10;
-            case "A": return 30;
-            case "B": return 48;
-            case "C": return 46;
-            case "D": return 32;
-            case "E": return 18;
-            case "F": return 33;
-            case "G": return 34;
-            case "H": return 35;
-            case "I": return 23;
-            case "J": return 36;
-            case "K": return 37;
-            case "L": return 38;
-            case "M": return 50;
-            case "N": return 49;
-            case "O": return 24;
-            case "P": return 25;
-            case "Q": return 16;
-            case "R": return 19;
-            case "S": return 31;
-            case "T": return 20;
-            case "U": return 22;
-            case "V": return 47;
-            case "W": return 17;
-            case "X": return 45;
-            case "Y": return 21;
-            case "Z": return 44;
-            case "BACK": return 14;
-            case "CAPITAL": return 58;
-            case "COMMA": return 51;
-            case "DELETE": return 211;
-            case "DOWN": return 208;
-            case "END": return 207;
-            case "ESCAPE": return 1;
-            case "F1": return 59;
-            case "F2": return 60;
-            case "F3": return 61;
-            case "F4": return 62;
-            case "F5": return 63;
-            case "F6": return 64;
-            case "F7": return 65;
-            case "HOME": return 199;
-            case "INSERT": return 210;
-            case "LBRACKET": return 26;
-            case "LCONTROL": return 29;
-            case "LMENU": return 56;
-            case "LMETA": return 219;
-            case "LSHIFT": return 42;
-            case "MINUS": return 12;
-            case "NUMPAD0": return 82;
-            case "NUMPAD1": return 79;
-            case "NUMPAD2": return 80;
-            case "NUMPAD3": return 81;
-            case "NUMPAD4": return 75;
-            case "NUMPAD5": return 76;
-            case "NUMPAD6": return 77;
-            case "NUMPAD7": return 71;
-            case "NUMPAD8": return 72;
-            case "NUMPAD9": return 73;
-            case "PERIOD": return 52;
-            case "RETURN": return 28;
-            case "RCONTROL": return 157;
-            case "RSHIFT": return 54;
-            case "RBRACKET": return 27;
-            case "SEMICOLON": return 39;
-            case "SLASH": return 53;
-            case "SPACE": return 57;
-            case "TAB": return 15;
-            case "GRAVE": return 41;
-            default: return -1;
-        }
+        return true;
     }
 }
