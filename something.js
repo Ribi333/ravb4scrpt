@@ -20,6 +20,7 @@ register("command", (arg) => {
         ChatLib.chat("&b/zppvp toggle - &3Toggle the module");
         ChatLib.chat("&b/zppvp debug - &3Toggle debug mode");
         ChatLib.chat("&b/zppvp debug2 - &3Toggle advanced debug mode");
+        ChatLib.chat("&b/zppvp settings - &3Open settings GUI");
         return;
     }
 
@@ -35,6 +36,15 @@ register("command", (arg) => {
         case "debug2":
             dataObject.debug2Mode = !dataObject.debug2Mode;
             ChatLib.chat(`&b[&3ZPPVP&b] Advanced debug mode ${dataObject.debug2Mode ? "&aenabled" : "&cdisabled"}.`);
+            break;
+        case "settings":
+            ChatLib.chat("&b[&3ZPPVP&b] Opening settings...");
+            // This is a key insight from AK47 - they might be using a separate command
+            try {
+                ChatLib.command("ak47", true);
+            } catch (e) {
+                ChatLib.chat("&c[&3ZPPVP&b] Error opening settings: " + e);
+            }
             break;
         default:
             ChatLib.chat("&cUnknown command argument. Use &b/zppvp&c for help.");
