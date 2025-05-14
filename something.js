@@ -1,432 +1,259 @@
 import PogObject from "PogData";
 
-// Import necessary Java classes
-const C02PacketUseEntity = Java.type("net.minecraft.network.play.client.C02PacketUseEntity");
-const C0APacketAnimation = Java.type("net.minecraft.network.play.client.C0APacketAnimation");
-const EntityAction = C02PacketUseEntity.Action;
-const S19PacketEntityStatus = Java.type("net.minecraft.network.play.server.S19PacketEntityStatus");
-const S0BPacketAnimation = Java.type("net.minecraft.network.play.server.S0BPacketAnimation");
+const C0EPacketClickWindow = Java.type("net.minecraft.network.play.client.C0EPacketClickWindow");
+const S2DPacketOpenWindow = Java.type("net.minecraft.network.play.server.S2DPacketOpenWindow");
+const S2FPacketSetSlot = Java.type("net.minecraft.network.play.server.S2FPacketSetSlot");
 
 // Initialize data storage
-const dataObject = new PogObject("ZeroPingPvP", {
+const dataObject = new PogObject("ZeroPingGUI", {
     enabled: false,
     debugMode: false,
-    debug2Mode: false,
-    highPingMode: true,     // Queue mode for high-ping environments
-    attackTimeout: 250,     // Default timeout: 250ms
-    firstAttackDelay: 175,  // Default first attack delay: 175ms
-    renderEffects: true,    // Show hit effects client-side
-    disableInGUI: true,     // Disable module when in GUI
-}, "zppvpData.json");
+    highPingMode: true,
+    clickDelay: 0,
+    timeout: 500,
+    renderPredictions: true,
+}, "zpgui.json");
 
-// State tracking
-let lastTargetId = -1;
-let pendingAttacks = new Set();  // Track entity IDs we've attacked
-let attackQueue = [];           // Queue for high-ping mode
-let attacking = false;          // Track if we're in an attack sequence
-let targetAcquiredAt = 0;       // When we first identified a target
-let inGUI = false;              // Track if in GUI
+let currentWindowId = -1;
+let windowTitle = "";
+let windowSize = 0;
+let isInGUI = false;
+let slotStates = [];
+let pendingClicks = [];
+let clicked = false;
+let guiOpenedAt = 0;
 
-// Register the command and its subcommands
 register("command", (arg1, arg2) => {
     if (!arg1) {
-        ChatLib.chat("&b[&3ZPPVP&b] Commands:");
-        ChatLib.chat("&b/zppvp toggle - &3Toggle the module");
-        ChatLib.chat("&b/zppvp debug - &3Toggle debug mode");
-        ChatLib.chat("&b/zppvp debug2 - &3Toggle advanced debug mode");
-        ChatLib.chat("&b/zppvp highping - &3Toggle high-ping mode");
-        ChatLib.chat("&b/zppvp effects - &3Toggle hit effects");
-        ChatLib.chat("&b/zppvp gui - &3Toggle disable in GUI");
-        ChatLib.chat("&b/zppvp firstdelay <ms> - &3Set first attack delay");
-        ChatLib.chat("&b/zppvp timeout <ms> - &3Set attack timeout");
-        ChatLib.chat("&b/zppvp status - &3Show current status");
-        ChatLib.chat("&b/zppvp recommend - &3Set recommended settings");
+        ChatLib.chat("&b[&3ZPGUI&b] Commands:");
+        ChatLib.chat("&b/zpgui toggle - &3Toggle the module");
+        ChatLib.chat("&b/zpgui debug - &3Toggle debug mode");
+        ChatLib.chat("&b/zpgui highping - &3Toggle high-ping mode");
+        ChatLib.chat("&b/zpgui render - &3Toggle click prediction rendering");
+        ChatLib.chat("&b/zpgui delay <ms> - &3Set first click delay");
+        ChatLib.chat("&b/zpgui timeout <ms> - &3Set click timeout");
+        ChatLib.chat("&b/zpgui status - &3Show current settings");
         return;
     }
 
     switch (arg1.toLowerCase()) {
         case "toggle":
             dataObject.enabled = !dataObject.enabled;
-            ChatLib.chat(`&b[&3ZPPVP&b] Module ${dataObject.enabled ? "&aenabled" : "&cdisabled"}.`);
+            ChatLib.chat(`&b[&3ZPGUI&b] Module ${dataObject.enabled ? "&aenabled" : "&cdisabled"}.`);
             break;
         case "debug":
             dataObject.debugMode = !dataObject.debugMode;
-            ChatLib.chat(`&b[&3ZPPVP&b] Debug mode ${dataObject.debugMode ? "&aenabled" : "&cdisabled"}.`);
-            break;
-        case "debug2":
-            dataObject.debug2Mode = !dataObject.debug2Mode;
-            ChatLib.chat(`&b[&3ZPPVP&b] Advanced debug mode ${dataObject.debug2Mode ? "&aenabled" : "&cdisabled"}.`);
+            ChatLib.chat(`&b[&3ZPGUI&b] Debug mode ${dataObject.debugMode ? "&aenabled" : "&cdisabled"}.`);
             break;
         case "highping":
             dataObject.highPingMode = !dataObject.highPingMode;
-            ChatLib.chat(`&b[&3ZPPVP&b] High-ping mode ${dataObject.highPingMode ? "&aenabled" : "&cdisabled"}.`);
+            ChatLib.chat(`&b[&3ZPGUI&b] High-ping mode ${dataObject.highPingMode ? "&aenabled" : "&cdisabled"}.`);
             break;
-        case "effects":
-            dataObject.renderEffects = !dataObject.renderEffects;
-            ChatLib.chat(`&b[&3ZPPVP&b] Hit effects ${dataObject.renderEffects ? "&aenabled" : "&cdisabled"}.`);
+        case "render":
+            dataObject.renderPredictions = !dataObject.renderPredictions;
+            ChatLib.chat(`&b[&3ZPGUI&b] Render predictions ${dataObject.renderPredictions ? "&aenabled" : "&cdisabled"}.`);
             break;
-        case "gui":
-            dataObject.disableInGUI = !dataObject.disableInGUI;
-            ChatLib.chat(`&b[&3ZPPVP&b] Disable in GUI ${dataObject.disableInGUI ? "&aenabled" : "&cdisabled"}.`);
-            break;
-        case "timeout":
+        case "delay":
             if (!arg2) {
-                ChatLib.chat(`&b[&3ZPPVP&b] Current attack timeout: &e${dataObject.attackTimeout}ms`);
-                return;
-            }
-            const timeout = parseInt(arg2);
-            if (isNaN(timeout) || timeout < 0) {
-                ChatLib.chat("&c[&3ZPPVP&b] Invalid timeout! Must be a non-negative number.");
-                return;
-            }
-            dataObject.attackTimeout = timeout;
-            ChatLib.chat(`&b[&3ZPPVP&b] Attack timeout set to &e${timeout}ms`);
-            break;
-        case "firstdelay":
-            if (!arg2) {
-                ChatLib.chat(`&b[&3ZPPVP&b] Current first attack delay: &e${dataObject.firstAttackDelay}ms`);
+                ChatLib.chat(`&b[&3ZPGUI&b] Current first click delay: &e${dataObject.clickDelay}ms`);
                 return;
             }
             const delay = parseInt(arg2);
             if (isNaN(delay) || delay < 0) {
-                ChatLib.chat("&c[&3ZPPVP&b] Invalid delay! Must be a non-negative number.");
+                ChatLib.chat("&c[&3ZPGUI&b] Invalid delay! Must be a positive number.");
                 return;
             }
-            dataObject.firstAttackDelay = delay;
-            ChatLib.chat(`&b[&3ZPPVP&b] First attack delay set to &e${delay}ms`);
+            dataObject.clickDelay = delay;
+            ChatLib.chat(`&b[&3ZPGUI&b] First click delay set to &e${delay}ms`);
             break;
-        case "recommend":
-            // Lower values for better performance
-            dataObject.attackTimeout = 40;
-            dataObject.firstAttackDelay = 175;
-            dataObject.highPingMode = true;
-            dataObject.renderEffects = true;
-            dataObject.disableInGUI = true;
-            dataObject.debugMode = false;
-            dataObject.debug2Mode = false;
-            ChatLib.chat("&b[&3ZPPVP&b] Applied recommended settings:");
-            ChatLib.chat("&b  • Attack Timeout: &e40ms");
-            ChatLib.chat("&b  • First Attack Delay: &e175ms");
-            ChatLib.chat("&b  • High-ping Mode: &aEnabled");
-            ChatLib.chat("&b  • Hit Effects: &aEnabled");
-            ChatLib.chat("&b  • Disable in GUI: &aEnabled");
+        case "timeout":
+            if (!arg2) {
+                ChatLib.chat(`&b[&3ZPGUI&b] Current click timeout: &e${dataObject.timeout}ms`);
+                return;
+            }
+            const timeout = parseInt(arg2);
+            if (isNaN(timeout) || timeout < 100) {
+                ChatLib.chat("&c[&3ZPGUI&b] Invalid timeout! Must be at least 100ms.");
+                return;
+            }
+            dataObject.timeout = timeout;
+            ChatLib.chat(`&b[&3ZPGUI&b] Click timeout set to &e${timeout}ms`);
             break;
         case "status":
-            ChatLib.chat("&b[&3ZPPVP&b] Status:");
+            ChatLib.chat("&b[&3ZPGUI&b] Status:");
             ChatLib.chat(`&b Module: ${dataObject.enabled ? "&aEnabled" : "&cDisabled"}`);
             ChatLib.chat(`&b Debug: ${dataObject.debugMode ? "&aEnabled" : "&cDisabled"}`);
-            ChatLib.chat(`&b Advanced Debug: ${dataObject.debug2Mode ? "&aEnabled" : "&cDisabled"}`);
             ChatLib.chat(`&b High-ping Mode: ${dataObject.highPingMode ? "&aEnabled" : "&cDisabled"}`);
-            ChatLib.chat(`&b Hit Effects: ${dataObject.renderEffects ? "&aEnabled" : "&cDisabled"}`);
-            ChatLib.chat(`&b Disable in GUI: ${dataObject.disableInGUI ? "&aEnabled" : "&cDisabled"}`);
-            ChatLib.chat(`&b Attack Timeout: &e${dataObject.attackTimeout}ms`);
-            ChatLib.chat(`&b First Attack Delay: &e${dataObject.firstAttackDelay}ms`);
+            ChatLib.chat(`&b Render Predictions: ${dataObject.renderPredictions ? "&aEnabled" : "&cDisabled"}`);
+            ChatLib.chat(`&b First Click Delay: &e${dataObject.clickDelay}ms`);
+            ChatLib.chat(`&b Click Timeout: &e${dataObject.timeout}ms`);
             break;
         default:
-            ChatLib.chat("&cUnknown command argument. Use &b/zppvp&c for help.");
+            ChatLib.chat("&cUnknown command argument. Use &b/zpgui&c for help.");
     }
     dataObject.save();
-}).setName("zppvp");
+}).setName("zpgui");
 
-// Track GUI open/close
-register("guiOpened", (gui) => {
-    inGUI = true;
-    if (dataObject.debug2Mode) {
-        ChatLib.chat("&b[&3ZPPVP&b] » GUI opened, module paused");
-    }
-});
-
-register("guiClosed", (gui) => {
-    inGUI = false;
-    if (dataObject.debug2Mode) {
-        ChatLib.chat("&b[&3ZPPVP&b] » GUI closed, module resumed");
-    }
-});
-
-// Find the closest entity in the player's line of sight
-function findTargetEntity() {
-    try {
-        // Get all player entities
-        const entities = World.getAllEntitiesOfType(Java.type("net.minecraft.entity.player.EntityPlayer"));
-        const player = Player.getPlayer();
-        const playerName = Player.getName();
-        
-        // Filter out self and sort by distance
-        const targets = entities.filter(entity => entity.getName() !== playerName)
-            .filter(entity => entity.distanceTo(player) <= 4)
-            .sort((a, b) => a.distanceTo(player) - b.distanceTo(player));
-            
-        if (targets.length > 0) {
-            return targets[0];
-        }
-        
-        if (dataObject.debug2Mode) {
-            ChatLib.chat("&c[&3ZPPVP&b] » No valid targets found within range");
-        }
-        return null;
-    } catch (e) {
-        if (dataObject.debug2Mode) {
-            ChatLib.chat(`&c[&3ZPPVP&b] » Error finding target: ${e.message}`);
-        }
-        return null;
-    }
-}
-
-// Process clicks to send attack packets
-register("clicked", (mouseX, mouseY, button, isPressed, event) => {
-    if (!dataObject.enabled) return;
+const clickHandler = register("guiMouseClick", (x, y, button, gui, event) => {
+    if (!dataObject.enabled || !isInGUI) return;
     
-    // Check if in GUI and module should be disabled
-    if (dataObject.disableInGUI && inGUI) return;
-    
-    // Only process left clicks when pressed
-    if (button !== 0 || !isPressed) return;
-    
-    // Find the closest valid target
-    const target = findTargetEntity();
-    
-    // If no target found, allow normal clicking
-    if (!target) return;
-    
-    // At this point we know we're in combat - CANCEL VANILLA CLICK
     cancel(event);
     
-    if (dataObject.debug2Mode) {
-        ChatLib.chat("&b[&3ZPPVP&b] » Left click detected!");
+    if (guiOpenedAt + dataObject.clickDelay > Date.now()) {
+        if (dataObject.debugMode) {
+            ChatLib.chat(`&b[&3ZPGUI&b] » First click delay, waiting...`);
+        }
+        return;
     }
-
-    try {
-        // Get the target's name for tracking
-        const entityId = target.getName();
+    
+    const slot = gui.getSlotUnderMouse();
+    if (!slot) return;
+    
+    const slotId = slot.getSlotIndex();
+    if (slotId < 0 || slotId >= windowSize) return;
+    
+    const item = slot.getStack();
+    
+    if (dataObject.highPingMode || !clicked) {
+        predictSlotChange(slotId, button);
         
-        // Check if this is a new target
-        if (lastTargetId !== entityId) {
-            lastTargetId = entityId;
-            targetAcquiredAt = Date.now();
-            
-            if (dataObject.debug2Mode) {
-                ChatLib.chat(`&b[&3ZPPVP&b] » New target acquired: ${entityId}`);
-            }
-        }
-        
-        // Check for first attack delay - don't send anything during this delay
-        if (targetAcquiredAt + dataObject.firstAttackDelay > Date.now()) {
-            if (dataObject.debug2Mode) {
-                ChatLib.chat(`&b[&3ZPPVP&b] » First attack delay, waiting...`);
-            }
-            return;
-        }
-        
-        if (dataObject.debug2Mode) {
-            ChatLib.chat(`&b[&3ZPPVP&b] » Target found: ${entityId}`);
-        }
-        
-        // Handle high-ping mode
-        if (dataObject.highPingMode || !attacking) {
-            // Always apply predictive effects
-            if (dataObject.renderEffects) {
-                // Apply hit effect client-side
-                Player.getPlayer().field_70737_aN = 3;
-                
-                if (dataObject.debug2Mode) {
-                    ChatLib.chat("&b[&3ZPPVP&b] » Hit effects applied early!");
-                }
-            }
-            
-            // Track this entity as pending
-            pendingAttacks.add(entityId);
-        }
-        
-        if (dataObject.highPingMode && attacking) {
-            // Queue the attack for later
-            attackQueue.push(entityId);
-            
-            if (dataObject.debug2Mode) {
-                ChatLib.chat(`&b[&3ZPPVP&b] » Queued attack on entity ${entityId}`);
-            }
-        } else {
-            // Process the attack immediately
-            sendAttack(target);
-        }
-    } catch (e) {
-        if (dataObject.debug2Mode) {
-            ChatLib.chat(`&c[&3ZPPVP&b] » Error: ${e.message}`);
+        if (dataObject.debugMode) {
+            ChatLib.chat(`&b[&3ZPGUI&b] » Predicted click on slot ${slotId}`);
         }
     }
-});
-
-// Function to send attack packets
-function sendAttack(target) {
-    if (!target) return;
     
-    try {
-        attacking = true;
+    if (dataObject.highPingMode && clicked) {
+        pendingClicks.push([slotId, button]);
         
-        // 1. Send arm swing animation packet
-        Client.sendPacket(new C0APacketAnimation());
-        
-        // 2. Send attack packet
-        Client.sendPacket(new C02PacketUseEntity(target.getEntity(), EntityAction.ATTACK));
-        
-        if (dataObject.debug2Mode) {
-            ChatLib.chat(`&b[&3ZPPVP&b] » Attack sent to ${target.getName()}`);
+        if (dataObject.debugMode) {
+            ChatLib.chat(`&b[&3ZPGUI&b] » Queued click on slot ${slotId}`);
         }
-        
-        // Set timeout to reset attack state
-        const initialTargetId = lastTargetId;
-        setTimeout(() => {
-            if (lastTargetId !== initialTargetId) return;
-            
-            // Reset state
-            attacking = false;
-            attackQueue = [];
-            
-            if (dataObject.debug2Mode && dataObject.attackTimeout > 0) {
-                ChatLib.chat("&b[&3ZPPVP&b] » Attack timeout reached, reset state");
-            }
-        }, dataObject.attackTimeout);
-    } catch (e) {
-        attacking = false;
-        if (dataObject.debug2Mode) {
-            ChatLib.chat(`&c[&3ZPPVP&b] » Error sending attack: ${e.message}`);
-        }
+    } else {
+        sendClick(slotId, button, item);
     }
-}
+}).unregister();
 
-// Process attack queue
-function processQueue() {
-    if (attackQueue.length === 0) return;
+const renderHandler = register("renderOverlay", () => {
+    if (!dataObject.enabled || !isInGUI || !dataObject.renderPredictions || pendingClicks.length === 0) return;
     
-    // Get the next entity ID
-    const nextEntityId = attackQueue.shift();
-    
-    // Find the entity
-    const entities = World.getAllEntities();
-    const target = entities.find(entity => entity.getName && entity.getName() === nextEntityId);
-    
-    if (target) {
-        sendAttack(target);
-    } else if (dataObject.debug2Mode) {
-        ChatLib.chat(`&c[&3ZPPVP&b] » Queued entity ${nextEntityId} no longer found`);
+    if (dataObject.debugMode && pendingClicks.length > 0) {
+        ChatLib.chat(`&b[&3ZPGUI&b] » Pending clicks: ${pendingClicks.length}`);
     }
-}
+}).unregister();
 
-// Cancel server hit animations for entities we've already hit
 register("packetReceived", (packet, event) => {
     if (!dataObject.enabled) return;
     
-    // Check if in GUI and module should be disabled
-    if (dataObject.disableInGUI && inGUI) return;
+    if (packet instanceof S2DPacketOpenWindow) {
 
-    if (dataObject.debugMode) {
-        ChatLib.chat(`&b[&3DEBUG&b] Received packet: ${packet.getClass().getSimpleName()}`);
-    }
-
-    // Cancel entity damage animations (hit effects) from server
-    if (packet instanceof S19PacketEntityStatus) {
-        const status = packet.func_149160_c();
-        if (status === 2) { // Hurt animation status
-            try {
-                const entityObj = packet.func_149161_a();
-                
-                if (!entityObj) return;
-                
-                // Create an entity wrapper to use our safe ID function
-                const entity = new Entity(entityObj);
-                const entityId = entity.getName();
-                
-                // If this is an entity we already attacked, cancel the server's animation
-                if (entityId && pendingAttacks.has(entityId)) {
-                    if (dataObject.debug2Mode) {
-                        ChatLib.chat(`&b[&3ZPPVP&b] » Cancelled server hit animation for entity ${entityId}`);
-                    }
-                    pendingAttacks.delete(entityId);
-                    
-                    // Process next queued attack if in high-ping mode
-                    if (dataObject.highPingMode) {
-                        processQueue();
-                    }
-                    
-                    if (dataObject.renderEffects) {
-                        cancel(event);
-                    }
-                }
-            } catch (e) {
-                if (dataObject.debug2Mode) {
-                    ChatLib.chat(`&c[&3ZPPVP&b] » Error processing damage animation: ${e.message}`);
-                }
-            }
+        currentWindowId = packet.func_148901_c();
+        windowTitle = packet.func_148902_e();
+        windowSize = packet.func_148898_f();
+        
+        slotStates = [];
+        pendingClicks = [];
+        clicked = false;
+        isInGUI = true;
+        guiOpenedAt = Date.now();
+        
+        clickHandler.register();
+        if (dataObject.renderPredictions) {
+            renderHandler.register();
+        }
+        
+        if (dataObject.debugMode) {
+            ChatLib.chat(`&b[&3ZPGUI&b] » GUI opened: ID=${currentWindowId}, Title=${windowTitle}, Size=${windowSize}`);
         }
     }
+});
+
+    if (!isInGUI) return;
     
-    // Cancel arm swing animations from server
-    if (packet instanceof S0BPacketAnimation) {
-        try {
-            const entityId = packet.func_148978_c();
-            const animationType = packet.func_148977_d();
+    isInGUI = false;
+    pendingClicks = [];
+    slotStates = [];
+    
+    clickHandler.unregister();
+    renderHandler.unregister();
+    
+    if (dataObject.debugMode) {
+        ChatLib.chat("&b[&3ZPGUI&b] » GUI closed");
+    }
+});
+
+register("packetReceived", (packet, event) => {
+    if (!dataObject.enabled || !isInGUI) return;
+    
+    if (packet instanceof S2FPacketSetSlot) {
+        const slotId = packet.func_149173_d();
+        const item = packet.func_149174_e();
+        
+        updateSlot(slotId, item);
+        
+        if (pendingClicks.length > 0) {
+            const [nextSlot, nextButton] = pendingClicks[0];
+            sendClick(nextSlot, nextButton, null);
+            pendingClicks.shift();
             
-            // Make sure player ID is valid
-            const playerId = Player.getPlayer().getEntityId();
-            
-            // If this is our own player's arm swing, we already did it
-            if (entityId === playerId && animationType === 0) {
-                if (dataObject.debug2Mode) {
-                    ChatLib.chat("&b[&3ZPPVP&b] » Cancelled server arm swing animation");
-                }
-                cancel(event);
-            }
-        } catch (e) {
-            if (dataObject.debug2Mode) {
-                ChatLib.chat(`&c[&3ZPPVP&b] » Error processing arm animation: ${e.message}`);
+            if (dataObject.debugMode) {
+                ChatLib.chat(`&b[&3ZPGUI&b] » Processed queued click on slot ${nextSlot}`);
             }
         }
     }
 });
 
-// Track sent attack packets for debugging
-register("packetSent", (packet) => {
-    if (!dataObject.enabled) return;
+function updateSlot(slotId, item) {
+    if (slotId < 0 || !isInGUI) return;
     
-    // Check if in GUI and module should be disabled
-    if (dataObject.disableInGUI && inGUI) return;
+    slotStates[slotId] = item ? {
+        id: Item.fromMCItem(item).getID(),
+        meta: Item.fromMCItem(item).getMetadata(),
+        name: Item.fromMCItem(item).getName(),
+    } : null;
+}
 
+function predictSlotChange(slotId, button) {
+    // For now, we just mark that we've clicked
+    // In a more advanced implementation, we could predict inventory changes
+}
+
+function sendClick(slotId, button, item) {
+    if (!isInGUI || currentWindowId === -1) return;
+    
+    clicked = true;
+    
+    const clickType = button;
+    const actionNumber = 0;
+    const mode = 0;
+    
+    Client.sendPacket(new C0EPacketClickWindow(
+        currentWindowId,
+        slotId,
+        clickType,
+        mode,
+        item || null,
+        actionNumber
+    ));
+    
     if (dataObject.debugMode) {
-        ChatLib.chat(`&b[&3DEBUG&b] Sent packet: ${packet.getClass().getSimpleName()}`);
+        ChatLib.chat(`&b[&3ZPGUI&b] » Sent click packet: slot=${slotId}, button=${button}`);
     }
-
-    if (packet instanceof C02PacketUseEntity) {
-        try {
-            let action;
-            try {
-                action = packet.func_149565_c();
-            } catch (e) {
-                if (dataObject.debug2Mode) {
-                    ChatLib.chat("&c[&3ZPPVP&b] » Could not get action type");
-                }
-                return;
-            }
-
-            if (action === EntityAction.ATTACK && dataObject.debug2Mode) {
-                ChatLib.chat("&b[&3ZPPVP&b] » Attack packet sent!");
-            }
-        } catch (e) {
-            if (dataObject.debug2Mode) {
-                ChatLib.chat(`&c[&3ZPPVP&b] » Error: ${e.message}`);
-            }
+    
+    const initialWindowId = currentWindowId;
+    setTimeout(() => {
+        if (!isInGUI || initialWindowId !== currentWindowId) return;
+        
+        pendingClicks = [];
+        clicked = false;
+        
+        if (dataObject.debugMode) {
+            ChatLib.chat(`&b[&3ZPGUI&b] » Click timeout reached, reset state`);
         }
-    }
-});
+    }, dataObject.timeout);
+}
 
-// Reset state when changing worlds
 register("worldLoad", () => {
     dataObject.save();
-    pendingAttacks.clear();
-    attackQueue = [];
-    attacking = false;
-    lastTargetId = -1;
-    inGUI = false;
 });
 
-// Initialization message
-ChatLib.chat("&b[&3ZPPVP&b] Module loaded! Use &b/zppvp toggle&3 to enable.");
-ChatLib.chat("&b[&3ZPPVP&b] Use &b/zppvp recommend&3 for optimal settings.");
+ChatLib.chat("&b[&3ZPGUI&b] Module loaded! Use &b/zpgui toggle&3 to enable.");
