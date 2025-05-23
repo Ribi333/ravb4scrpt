@@ -1,539 +1,340 @@
-package keystrokesmod.module.impl.player;
+package keystrokesmod.clickgui;
 
 import keystrokesmod.Raven;
-import keystrokesmod.event.*;
+import keystrokesmod.clickgui.components.Component;
+import keystrokesmod.clickgui.components.impl.BindComponent;
+import keystrokesmod.clickgui.components.impl.CategoryComponent;
+import keystrokesmod.clickgui.components.impl.ModuleComponent;
 import keystrokesmod.module.Module;
-import keystrokesmod.module.ModuleManager;
-import keystrokesmod.module.impl.minigames.BedWars;
-import keystrokesmod.module.setting.impl.ButtonSetting;
-import keystrokesmod.module.setting.impl.SliderSetting;
-import keystrokesmod.utility.*;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockBed;
-import net.minecraft.block.properties.IProperty;
-import net.minecraft.block.state.IBlockState;
-import net.minecraft.init.Blocks;
-import net.minecraft.item.ItemStack;
-import net.minecraft.network.play.client.C07PacketPlayerDigging;
-import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
-import net.minecraft.network.play.client.C0APacketAnimation;
-import net.minecraft.network.play.server.S12PacketEntityVelocity;
-import net.minecraft.network.play.server.S27PacketExplosion;
-import net.minecraft.util.BlockPos;
-import net.minecraft.util.EnumFacing;
-import net.minecraft.util.MovingObjectPosition;
-import net.minecraftforge.client.event.RenderWorldLastEvent;
-import net.minecraftforge.event.entity.EntityJoinWorldEvent;
-import net.minecraftforge.fml.common.eventhandler.EventPriority;
-import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
+import keystrokesmod.module.impl.client.CommandLine;
+import keystrokesmod.module.impl.client.Gui;
+import keystrokesmod.utility.Commands;
+import keystrokesmod.utility.Timer;
+import keystrokesmod.utility.Utils;
+import keystrokesmod.utility.shader.BlurUtils;
+import keystrokesmod.utility.shader.RoundedUtils;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiButton;
+import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.GuiTextField;
+import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.gui.inventory.GuiInventory;
+import net.minecraft.client.renderer.GlStateManager;
+import net.minecraftforge.client.event.GuiScreenEvent;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.client.config.GuiButtonExt;
+import org.lwjgl.input.Keyboard;
+import org.lwjgl.input.Mouse;
+import org.lwjgl.opengl.GL11;
 
 import java.awt.*;
-import java.util.*;
-import java.util.List;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
-public class BedAura extends Module {
-    public SliderSetting mode;
-    private SliderSetting breakSpeed;
-    private SliderSetting fov;
-    public SliderSetting range;
-    private SliderSetting rate;
-    public ButtonSetting allowAura;
-    private ButtonSetting breakNearBlock;
-    private ButtonSetting cancelKnockback;
-    private ButtonSetting disableBreakEffects;
-    public ButtonSetting groundSpoof;
-    private ButtonSetting onlyWhileVisible;
-    private ButtonSetting renderOutline;
-    private ButtonSetting sendAnimations;
-    private ButtonSetting silentSwing;
-    private String[] modes = new String[] { "Legit", "Instant", "Swap" };
+public class ClickGui extends GuiScreen {
+    private ScheduledFuture sf;
+    private Timer logoSmoothWidth;
+    private Timer logoSmoothLength;
+    private Timer smoothEntity;
+    private Timer backgroundFade;
+    private Timer blurSmooth;
+    private ScaledResolution sr;
+    private GuiButtonExt commandLineSend;
+    private GuiTextField commandLineInput;
+    public static ArrayList<CategoryComponent> categories;
+    public int originalScale;
+    public int previousScale;
+    private static boolean isNotFirstOpen;
 
-    private BlockPos[] bedPos;
-    private BlockPos packetPos;
-    public float breakProgress;
-    private int lastSlot = -1;
-    public BlockPos currentBlock, lastBlock;
-    private long lastCheck = 0;
-    public boolean stopAutoblock, breakTick;
-    private int outlineColor = new Color(226, 65, 65).getRGB();
-    private BlockPos nearestBlock;
-    private Map<BlockPos, Float> breakProgressMap = new HashMap<>();
-    public double lastProgress;
-    public float vanillaProgress;
-    private int defaultOutlineColor = new Color(226, 65, 65).getRGB();
-    private BlockPos previousBlockBroken;
-    public boolean rotateLastBlock;
-    private boolean spoofGround, firstStop;
-    private boolean isBreaking, startPacket, stopPacket, ignoreSlow, delayStop;
-    private Object LastBlock;
+    public ClickGui() {
+        categories = new ArrayList();
+        int y = 5;
+        Module.category[] values;
+        int length = (values = Module.category.values()).length;
 
-    public BedAura() {
-        super("BedAura", category.player, 0);
-        this.registerSetting(mode = new SliderSetting("Break mode", 0, modes));
-        this.registerSetting(breakSpeed = new SliderSetting("Break speed", "x", 1, 1, 2, 0.01));
-        this.registerSetting(fov = new SliderSetting("FOV", 360.0, 30.0, 360.0, 4.0));
-        this.registerSetting(range = new SliderSetting("Range", 4.5, 1.0, 8.0, 0.5));
-        this.registerSetting(rate = new SliderSetting("Rate", " second", 0.2, 0.05, 3.0, 0.05));
-        this.registerSetting(allowAura = new ButtonSetting("Allow aura", true));
-        this.registerSetting(breakNearBlock = new ButtonSetting("Break near block", false));
-        this.registerSetting(cancelKnockback = new ButtonSetting("Cancel knockback", false));
-        this.registerSetting(disableBreakEffects = new ButtonSetting("Disable break effects", false));
-        this.registerSetting(groundSpoof = new ButtonSetting("Ground spoof", false));
-        this.registerSetting(onlyWhileVisible = new ButtonSetting("Only while visible", false));
-        this.registerSetting(renderOutline = new ButtonSetting("Render block outline", true));
-        this.registerSetting(sendAnimations = new ButtonSetting("Send animations", false));
-        this.registerSetting(silentSwing = new ButtonSetting("Silent swing", false));
+        for (int i = 0; i < length; ++i) {
+            Module.category c = values[i];
+            CategoryComponent categoryComponent = new CategoryComponent(c);
+            categoryComponent.setY(y, false);
+            categories.add(categoryComponent);
+            y += 20;
+        }
+    }
+
+    public void initMain() {
+        (this.logoSmoothWidth = this.smoothEntity = this.blurSmooth = this.backgroundFade = new Timer(500.0F)).start();
+        this.sf = Raven.getScheduledExecutor().schedule(() -> {
+            (this.logoSmoothLength = new Timer(650.0F)).start();
+        }, 650L, TimeUnit.MILLISECONDS);
     }
 
     @Override
-    public String getInfo() {
-        return modes[(int) mode.getInput()];
+    public void initGui() {
+        super.initGui();
+        if (!isNotFirstOpen) {
+            isNotFirstOpen = true;
+            this.previousScale = (int) Gui.guiScale.getInput();
+        }
+        if (this.previousScale != Gui.guiScale.getInput()) {
+            for (CategoryComponent categoryComponent : categories) {
+                categoryComponent.limitPositions();
+            }
+        }
+        this.sr = new ScaledResolution(this.mc);
+        for (CategoryComponent categoryComponent : categories) {
+            categoryComponent.setScreenHeight(this.sr.getScaledHeight());
+        }
+        (this.commandLineInput = new GuiTextField(1, this.mc.fontRendererObj, 22, this.height - 100, 150, 20)).setMaxStringLength(256);
+        this.buttonList.add(this.commandLineSend = new GuiButtonExt(2, 22, this.height - 70, 150, 20, "Send"));
+        this.commandLineSend.visible = CommandLine.opened;
+        this.previousScale = (int) Gui.guiScale.getInput();
+    }
+
+    public void drawScreen(int x, int y, float p) {
+        if (Gui.backgroundBlur.getInput() != 0) {
+            BlurUtils.prepareBlur();
+            RoundedUtils.drawRound(0, 0, this.width, this.height, 0.0f, true, Color.black);
+            float inputToRange = (float) (3 * ((Gui.backgroundBlur.getInput() + 35) / 100));
+            BlurUtils.blurEnd(2, this.blurSmooth.getValueFloat(0, inputToRange, 1));
+        }
+        if (Gui.darkBackground.isToggled()) {
+            drawRect(0, 0, this.width, this.height, (int) (this.backgroundFade.getValueFloat(0.0F, 0.7F, 2) * 255.0F) << 24);
+        }
+        int r;
+        if (!Gui.removeWatermark.isToggled()) {
+            int h = this.height / 4;
+            int wd = this.width / 2;
+            int w_c = 30 - this.logoSmoothWidth.getValueInt(0, 30, 3);
+            this.drawCenteredString(this.fontRendererObj, "r", wd + 1 - w_c, h - 25, Utils.getChroma(2L, 1500L));
+            this.drawCenteredString(this.fontRendererObj, "a", wd - w_c, h - 15, Utils.getChroma(2L, 1200L));
+            this.drawCenteredString(this.fontRendererObj, "v", wd - w_c, h - 5, Utils.getChroma(2L, 900L));
+            this.drawCenteredString(this.fontRendererObj, "e", wd - w_c, h + 5, Utils.getChroma(2L, 600L));
+            this.drawCenteredString(this.fontRendererObj, "n", wd - w_c, h + 15, Utils.getChroma(2L, 300L));
+            this.drawCenteredString(this.fontRendererObj, "bS", wd + 1 + w_c, h + 30, Utils.getChroma(2L, 0L));
+            this.drawVerticalLine(wd - 10 - w_c, h - 30, h + 43, Color.white.getRGB());
+            this.drawVerticalLine(wd + 10 + w_c, h - 30, h + 43, Color.white.getRGB());
+            if (this.logoSmoothLength != null) {
+                r = this.logoSmoothLength.getValueInt(0, 20, 2);
+                this.drawHorizontalLine(wd - 10, wd - 10 + r, h - 29, -1);
+                this.drawHorizontalLine(wd + 10, wd + 10 - r, h + 42, -1);
+            }
+        }
+
+        for (CategoryComponent c : categories) {
+            c.render(this.fontRendererObj);
+            c.mousePosition(x, y);
+
+            for (Component m : c.getModules()) {
+                m.drawScreen(x, y);
+            }
+        }
+
+        GL11.glColor3f(1.0f, 1.0f, 1.0f);
+        if (!Gui.removePlayerModel.isToggled()) {
+            GlStateManager.pushMatrix();
+            GlStateManager.disableBlend();
+            GuiInventory.drawEntityOnScreen(this.width + 15 - this.smoothEntity.getValueInt(0, 40, 2), this.height - 10, 40, (float) (this.width - 25 - x), (float) (this.height - 50 - y), this.mc.thePlayer);
+            GlStateManager.enableBlend();
+            GlStateManager.popMatrix();
+        }
+
+
+        if (CommandLine.opened) {
+            if (!this.commandLineSend.visible) {
+                this.commandLineSend.visible = true;
+            }
+
+            r = CommandLine.animate.isToggled() ? CommandLine.animation.getValueInt(0, 200, 2) : 200;
+            if (CommandLine.closed) {
+                r = 200 - r;
+                if (r == 0) {
+                    CommandLine.closed = false;
+                    CommandLine.opened = false;
+                    this.commandLineSend.visible = false;
+                }
+            }
+            drawRect(0, 0, r, this.height, -1089466352);
+            this.drawHorizontalLine(0, r - 1, (this.height - 345), -1);
+            this.drawHorizontalLine(0, r - 1, (this.height - 115), -1);
+            drawRect(r - 1, 0, r, this.height, -1);
+            Commands.rc(this.fontRendererObj, this.height, r, this.sr.getScaleFactor());
+            int x2 = r - 178;
+            this.commandLineInput.xPosition = x2;
+            this.commandLineSend.xPosition = x2;
+            this.commandLineInput.drawTextBox();
+            super.drawScreen(x, y, p);
+        }
+        else if (CommandLine.closed) {
+            CommandLine.closed = false;
+        }
+    }
+
+    public void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
+        if (mouseButton == 0) {
+            boolean draggingAssigned = false;
+            for (int i = categories.size() - 1; i >= 0; i--) {
+                CategoryComponent category = categories.get(i);
+                if (!draggingAssigned && category.draggable(mouseX, mouseY)) {
+                    category.overTitle(true);
+                    category.xx = mouseX - category.getX();
+                    category.yy = mouseY - category.getY();
+                    category.dragging = true;
+                    draggingAssigned = true;
+                }
+                else {
+                    category.overTitle(false);
+                }
+            }
+        }
+
+        if (mouseButton == 1) {
+            boolean toggled = false;
+            for (int i = categories.size() - 1; i >= 0; i--) {
+                CategoryComponent category = categories.get(i);
+                if (!toggled && category.overTitle(mouseX, mouseY)) {
+                    category.mouseClicked(!category.isOpened());
+                    toggled = true;
+                }
+            }
+        }
+
+        for (CategoryComponent category : categories) {
+            if (category.isOpened() && !category.getModules().isEmpty() && category.overRect(mouseX, mouseY)) {
+                for (ModuleComponent component : category.getModules()) {
+                    if (component.onClick(mouseX, mouseY, mouseButton)) {
+                        category.openModule(component);
+                    }
+                }
+            }
+        }
+
+        if (CommandLine.opened) {
+            this.commandLineInput.mouseClicked(mouseX, mouseY, mouseButton);
+            super.mouseClicked(mouseX, mouseY, mouseButton);
+        }
+    }
+
+
+    public void mouseReleased(int x, int y, int button) {
+        if (button == 0) {
+            Iterator<CategoryComponent> iterator = categories.iterator();
+            while (iterator.hasNext()) {
+                CategoryComponent category = iterator.next();
+                category.overTitle(false);
+                if (category.isOpened() && !category.getModules().isEmpty()) {
+                    for (Component module : category.getModules()) {
+                        module.mouseReleased(x, y, button);
+                    }
+                }
+            }
+        }
     }
 
     @Override
-    public void onDisable() {
-        reset(true, true);
-        bedPos = null;
-    }
-
-    @SubscribeEvent(priority = EventPriority.HIGHEST) // takes priority over ka & antifireball
-    public void onPreUpdate(PreUpdateEvent e) {
-
-    }
-
-    @SubscribeEvent
-    public void onWorldJoin(EntityJoinWorldEvent e) {
-        if (e.entity == mc.thePlayer) {
-            reset(true, true);
-            bedPos = null;
-        }
-    }
-
-    @SubscribeEvent
-    public void onReceivePacket(ReceivePacketEvent e) {
-        if (!Utils.nullCheck() || !cancelKnockback.isToggled() || currentBlock == null) {
-            return;
-        }
-        if (e.getPacket() instanceof S12PacketEntityVelocity) {
-            if (((S12PacketEntityVelocity) e.getPacket()).getEntityID() == mc.thePlayer.getEntityId()) {
-                e.setCanceled(true);
+    public void handleMouseInput() throws IOException {
+        super.handleMouseInput();
+        int wheelInput = Mouse.getDWheel();
+        if (wheelInput != 0) {
+            for (CategoryComponent category : categories) {
+                category.onScroll(wheelInput);
             }
         }
-        else if (e.getPacket() instanceof S27PacketExplosion) {
-            e.setCanceled(true);
-        }
     }
 
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void onClientRotation(ClientRotationEvent e) {
-        if (!Utils.nullCheck()) {
-            return;
+    @Override
+    public void setWorldAndResolution(Minecraft p_setWorldAndResolution_1_, final int p_setWorldAndResolution_2_, final int p_setWorldAndResolution_3_) {
+        this.mc = p_setWorldAndResolution_1_;
+        originalScale = this.mc.gameSettings.guiScale;
+        this.mc.gameSettings.guiScale = (int) Gui.guiScale.getInput() + 1;
+        this.itemRender = p_setWorldAndResolution_1_.getRenderItem();
+        this.fontRendererObj = p_setWorldAndResolution_1_.fontRendererObj;
+        final ScaledResolution scaledresolution = new ScaledResolution(this.mc);
+        this.width = scaledresolution.getScaledWidth();
+        this.height = scaledresolution.getScaledHeight();
+        if (!MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.InitGuiEvent.Pre(this, this.buttonList))) {
+            this.buttonList.clear();
+            this.initGui();
         }
-        if (delayStop) {
-            delayStop = false;
-        } else {
-            stopAutoblock = false;
-        }
-        breakTick = false;
-        if (currentBlock == null || !RotationUtils.inRange(currentBlock, range.getInput())) {
-            reset(true, true);
-            bedPos = null;
-        }
-        if (Utils.isBedwarsPracticeOrReplay()) {
-            return;
-        }
-        if (ModuleManager.bedwars != null && ModuleManager.bedwars.isEnabled() && BedWars.whitelistOwnBed.isToggled() && !BedWars.outsideSpawn) {
-            reset(true, true);
-            return;
-        }
-        if (!mc.thePlayer.capabilities.allowEdit || mc.thePlayer.isSpectator()) {
-            reset(true, true);
-            return;
-        }
-        if (bedPos == null) {
-            if (!isBreaking && System.currentTimeMillis() - lastCheck >= (rate.getInput() * 1000)) {
-                lastCheck = System.currentTimeMillis();
-                bedPos = getBedPos();
-            }
-            if (bedPos == null) {
-                reset(true, true);
-                return;
-            }
+        MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.InitGuiEvent.Post(this, this.buttonList));
+    }
+
+    @Override
+    public void keyTyped(char t, int k) {
+        if (k == Keyboard.KEY_ESCAPE && !binding()) {
+            this.mc.displayGuiScreen(null);
         }
         else {
-            if (!(BlockUtils.getBlock(bedPos[0]) instanceof BlockBed) || (currentBlock != null && BlockUtils.replaceable(currentBlock))) {
-                reset(true, true);
-                return;
+            Iterator<CategoryComponent> iterator = categories.iterator();
+            while (iterator.hasNext()) {
+                CategoryComponent category = iterator.next();
+
+                if (category.isOpened() && !category.getModules().isEmpty()) {
+                    for (Component module : category.getModules()) {
+                        module.keyTyped(t, k);
+                    }
+                }
             }
-        }
-        if (breakNearBlock.isToggled() && isCovered(bedPos[0]) && isCovered(bedPos[1])) {
-            if (nearestBlock == null) {
-                nearestBlock = getBestBlock(bedPos, true);
+            if (CommandLine.opened) {
+                String cm = this.commandLineInput.getText();
+                if (k == 28 && !cm.isEmpty()) {
+                    Commands.rCMD(this.commandLineInput.getText());
+                    this.commandLineInput.setText("");
+                    return;
+                }
+                this.commandLineInput.textboxKeyTyped(t, k);
             }
-            breakBlock(e, nearestBlock);
-        }
-        else {
-            nearestBlock = null;
-            breakBlock(e, bedPos[0]);
         }
     }
 
-    @SubscribeEvent
-    public void onPreMotion(PreMotionEvent e) {
-
-        if (stopAutoblock) {
-            if (Raven.debug) {
-                Utils.sendModuleMessage(this, "&7stopping autoblock (&3" + mc.thePlayer.ticksExisted + "&7).");
-            }
-        }
-
-        if (groundSpoof.isToggled() && !mc.thePlayer.isInWater() && spoofGround) {
-            e.setOnGround(true);
-            if (Raven.debug) {
-                Utils.sendModuleMessage(this, "&7ground spoof (&3" + mc.thePlayer.ticksExisted + "&7).");
-            }
-        }
-
-        if (startPacket) {
-            mc.thePlayer.sendQueue.addToSendQueue(new C07PacketPlayerDigging(C07PacketPlayerDigging.Action.START_DESTROY_BLOCK, packetPos, EnumFacing.UP));
-            swing();
-            if (Raven.debug) {
-                Utils.sendModuleMessage(this, "sending c07 &astart &7break &7(&b" + mc.thePlayer.ticksExisted + "&7)");
-            }
-        }
-        if (stopPacket) {
-            mc.thePlayer.sendQueue.addToSendQueue(new C07PacketPlayerDigging(C07PacketPlayerDigging.Action.STOP_DESTROY_BLOCK, packetPos, EnumFacing.UP));
-            swing();
-            if (Raven.debug) {
-                Utils.sendModuleMessage(this, "sending c07 &cstop &7break &7(&b" + mc.thePlayer.ticksExisted + "&7)");
-            }
-        }
-        if (isBreaking && !startPacket && !stopPacket) {
-            swing();
-        }
-
-        startPacket = stopPacket = spoofGround = false;
-    }
-
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void onRenderWorld(RenderWorldLastEvent e) {
-        if (!renderOutline.isToggled() || currentBlock == null || !Utils.nullCheck()) {
-            return;
-        }
-        if (ModuleManager.bedESP != null && ModuleManager.bedESP.isEnabled()) {
-            outlineColor = Theme.getGradient((int) ModuleManager.bedESP.theme.getInput(), 0);
-        }
-        else if (ModuleManager.hud != null && ModuleManager.hud.isEnabled()) {
-            outlineColor = Theme.getGradient((int) ModuleManager.hud.theme.getInput(), 0);
-        }
-        else {
-            outlineColor = defaultOutlineColor;
-        }
-        RenderUtils.renderBlock(currentBlock, outlineColor, (Arrays.asList(bedPos).contains(currentBlock) ? 0.5625 : 1),true, false);
-    }
-
-    private void resetSlot() {
-        if (Raven.packetsHandler != null && Raven.packetsHandler.playerSlot != null && Utils.nullCheck() && Raven.packetsHandler.playerSlot.get() != mc.thePlayer.inventory.currentItem && mode.getInput() == 2) {
-            setPacketSlot(mc.thePlayer.inventory.currentItem);
-        }
-        else if (lastSlot != -1) {
-            lastSlot = mc.thePlayer.inventory.currentItem = lastSlot;
+    public void actionPerformed(GuiButton b) {
+        if (b == this.commandLineSend) {
+            Commands.rCMD(this.commandLineInput.getText());
+            this.commandLineInput.setText("");
         }
     }
 
-    public boolean cancelKnockback() {
-        return cancelKnockback.isToggled() && currentBlock != null && RotationUtils.inRange(currentBlock, range.getInput());
+    @Override
+    public void onGuiClosed() {
+        this.logoSmoothLength = null;
+        if (this.sf != null) {
+            this.sf.cancel(true);
+            this.sf = null;
+        }
+        for (CategoryComponent c : categories) {
+            c.dragging = false;
+            for (Component m : c.getModules()) {
+                m.onGuiClosed();
+            }
+        }
+        this.mc.gameSettings.guiScale = originalScale;
     }
 
-    private BlockPos[] getBedPos() {
-        int range;
-        priority:
-        for (int n = range = (int) this.range.getInput(); range >= -n; --range) {
-            for (int j = -n; j <= n; ++j) {
-                for (int k = -n; k <= n; ++k) {
-                    final BlockPos blockPos = new BlockPos(mc.thePlayer.posX + j, mc.thePlayer.posY + range, mc.thePlayer.posZ + k);
-                    final IBlockState getBlockState = mc.theWorld.getBlockState(blockPos);
-                    if (getBlockState.getBlock() == Blocks.bed && getBlockState.getValue((IProperty) BlockBed.PART) == BlockBed.EnumPartType.FOOT) {
-                        float fov = (float) this.fov.getInput();
-                        if (fov != 360 && !Utils.inFov(fov, blockPos)) {
-                            continue priority;
-                        }
-                        return new BlockPos[]{blockPos, blockPos.offset((EnumFacing) getBlockState.getValue((IProperty) BlockBed.FACING))};
+    @Override
+    public boolean doesGuiPauseGame() {
+        return false;
+    }
+
+    private boolean binding() {
+        for (CategoryComponent c : categories) {
+            for (ModuleComponent m : c.getModules()) {
+                for (Component component : m.settings) {
+                    if (component instanceof BindComponent && ((BindComponent) component).isBinding) {
+                        return true;
                     }
                 }
             }
         }
-        return null;
+        return false;
     }
 
-    private void setRots(ClientRotationEvent e) {
-        // Fix the type mismatch by ensuring rotateLastBlock is the same type as currentBlock
-        // Option 1: If rotateLastBlock should be a BlockPos
-        BlockPos blockToRotateTo = currentBlock == null ? lastBlock : currentBlock;
-        float[] rotations = RotationUtils.getRotations(blockToRotateTo, e.getYaw(), e.getPitch());
-
-        // Option 2: If you need to skip rotation when currentBlock is null
-        // if (currentBlock == null) {
-        //     // Skip rotation or use default values
-        //     return;
-        // }
-        // float[] rotations = RotationUtils.getRotations(currentBlock, e.getYaw(), e.getPitch());
-
-        e.setYaw(RotationUtils.applyVanilla(rotations[0]));
-        e.setPitch(rotations[1]);
-        if (Raven.debug) {
-            Utils.sendModuleMessage(this, "&7rotating (&3" + mc.thePlayer.ticksExisted + "&7).");
-        }
-    }
-
-    public BlockPos getBestBlock(BlockPos[] positions, boolean getSurrounding) {
-        if (positions == null || positions.length == 0) {
-            return null;
-        }
-        HashMap<BlockPos, double[]> blockMap = new HashMap<>();
-        for (BlockPos pos : positions) {
-            if (pos == null) {
-                continue;
-            }
-            if (getSurrounding) {
-                for (EnumFacing enumFacing : EnumFacing.values()) {
-                    if (enumFacing == EnumFacing.DOWN) {
-                        continue;
-                    }
-                    BlockPos offset = pos.offset(enumFacing);
-                    if (Arrays.asList(positions).contains(offset)) {
-                        continue;
-                    }
-                    if (!RotationUtils.inRange(offset, range.getInput())) {
-                        continue;
-                    }
-                    double efficiency = getEfficiency(offset);
-                    double distance = mc.thePlayer.getDistanceSqToCenter(offset);
-                    blockMap.put(offset, new double[]{distance, efficiency});
-                }
-            }
-            else {
-                if (!RotationUtils.inRange(pos, range.getInput())) {
-                    continue;
-                }
-                double efficiency = getEfficiency(pos);
-                double distance = mc.thePlayer.getDistanceSqToCenter(pos);
-                blockMap.put(pos, new double[]{distance, efficiency});
+    public void onSliderChange() {
+        for (CategoryComponent c : categories) {
+            for (ModuleComponent m : c.getModules()) {
+                m.onSliderChange();
             }
         }
-        List<Map.Entry<BlockPos, double[]>> sortedByDistance = sortByDistance(blockMap);
-        List<Map.Entry<BlockPos, double[]>> sortedByEfficiency = sortByEfficiency(sortedByDistance);
-        List<Map.Entry<BlockPos, double[]>> sortedByPreviousBlocks = sortByPreviousBlocks(sortedByEfficiency);
-        return sortedByPreviousBlocks.isEmpty() ? null : sortedByPreviousBlocks.get(0).getKey();
-    }
-
-    private List<Map.Entry<BlockPos, double[]>> sortByDistance(HashMap<BlockPos, double[]> blockMap) {
-        List<Map.Entry<BlockPos, double[]>> list = new ArrayList<>(blockMap.entrySet());
-        list.sort(Comparator.comparingDouble(entry -> entry.getValue()[0]));
-        return list;
-    }
-
-    private List<Map.Entry<BlockPos, double[]>> sortByEfficiency(List<Map.Entry<BlockPos, double[]>> blockList) {
-        blockList.sort((entry1, entry2) -> Double.compare(entry2.getValue()[1], entry1.getValue()[1]));
-        return blockList;
-    }
-
-    private List<Map.Entry<BlockPos, double[]>> sortByPreviousBlocks(List<Map.Entry<BlockPos, double[]>> blockList) {
-        blockList.sort((entry1, entry2) -> {
-            boolean isEntry1Previous = entry1.getKey().equals(previousBlockBroken);
-            boolean isEntry2Previous = entry2.getKey().equals(previousBlockBroken);
-            if (isEntry1Previous && !isEntry2Previous) {
-                return -1;
-            }
-            if (!isEntry1Previous && isEntry2Previous) {
-                return 1;
-            }
-            return 0;
-        });
-        return blockList;
-    }
-
-    private double getEfficiency(BlockPos pos) {
-        Block block = BlockUtils.getBlock(pos);
-        ItemStack tool = (mode.getInput() == 2 && Utils.getTool(block) != -1) ? mc.thePlayer.inventory.getStackInSlot(Utils.getTool(block)) : mc.thePlayer.getHeldItem();
-        double efficiency = BlockUtils.getBlockHardness(block, tool, false, ignoreSlow);
-
-        if (breakProgressMap.get(pos) != null) {
-            efficiency = breakProgressMap.get(pos);
-        }
-
-        return efficiency;
-    }
-
-    private void reset(boolean resetSlot, boolean stopAutoblock) {
-        if (resetSlot) {
-            resetSlot();
-        }
-        breakProgress = 0;
-        breakProgressMap.clear();
-        lastSlot = -1;
-        vanillaProgress = 0;
-        lastProgress = 0;
-        if (stopAutoblock) {
-            this.stopAutoblock = false;
-        }
-        LastBlock = null;
-        firstStop = false;
-        if (isBreaking) {
-            ModuleUtils.isBreaking = false;
-            isBreaking = false;
-        }
-        breakTick = false;
-        currentBlock = null;
-        nearestBlock = null;
-        ignoreSlow = false;
-        delayStop = false;
-    }
-
-    public void setPacketSlot(int slot) {
-        if (slot == -1) {
-            return;
-        }
-        Raven.packetsHandler.updateSlot(slot);
-        stopAutoblock = true;
-    }
-
-    private void startBreak(ClientRotationEvent e ,BlockPos blockPos) {
-        setRots(e);
-        packetPos = blockPos;
-        startPacket = true;
-        isBreaking = true;
-        breakTick = true;
-
-        ignoreSlow = true;
-    }
-
-    private void stopBreak(ClientRotationEvent e, BlockPos blockPos) {
-        setRots(e);
-        packetPos = blockPos;
-        stopPacket = true;
-        isBreaking = false;
-        breakTick = true;
-        if (ignoreSlow) {
-            spoofGround = true;
-        }
-        ignoreSlow = false;
-    }
-
-    private void swing() {
-        if (!silentSwing.isToggled()) {
-            mc.thePlayer.swingItem();
-        }
-        else {
-            mc.thePlayer.sendQueue.addToSendQueue(new C0APacketAnimation());
-        }
-    }
-
-    private void breakBlock(ClientRotationEvent e, BlockPos blockPos) {
-        if (blockPos == null) {
-            reset(true, true);
-            return;
-        }
-        lastBlock = blockPos;
-        float fov = (float) this.fov.getInput();
-        if (fov != 360 && !Utils.inFov(fov, blockPos)) {
-            return;
-        }
-        if (onlyWhileVisible.isToggled() && (mc.objectMouseOver == null || mc.objectMouseOver.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK || !mc.objectMouseOver.getBlockPos().equals(blockPos))) {
-            return;
-        }
-        if (BlockUtils.replaceable(currentBlock == null ? blockPos : currentBlock)) {
-            reset(true, true);
-            return;
-        }
-        Block block = BlockUtils.getBlock(blockPos);
-        currentBlock = blockPos;
-        if ((breakProgress <= 0 || breakProgress >= 1) && mode.getInput() == 2 && !firstStop) {
-            firstStop = true;
-            stopAutoblock = delayStop = true;
-            setRots(e);
-            return;
-        }
-        if (mode.getInput() == 2 || mode.getInput() == 0) {
-            if (breakProgress == 0) {
-                resetSlot();
-                if (mode.getInput() == 0) {
-                    setSlot(Utils.getTool(block));
-                }
-                startBreak(e, blockPos);
-            }
-            else if (breakProgress >= 1) {
-                if (mode.getInput() == 2) {
-                    setPacketSlot(Utils.getTool(block));
-                }
-                stopBreak(e, blockPos);
-                previousBlockBroken = currentBlock;
-                reset(false, false);
-                Iterator<Map.Entry<BlockPos, Float>> iterator = breakProgressMap.entrySet().iterator();
-                while (iterator.hasNext()) {
-                    Map.Entry<BlockPos, Float> entry = iterator.next();
-                    if (entry.getKey().equals(blockPos)) {
-                        iterator.remove();
-                    }
-                }
-                if (!disableBreakEffects.isToggled()) {
-                    mc.playerController.onPlayerDestroyBlock(blockPos, EnumFacing.UP);
-                }
-                LastBlock = previousBlockBroken;
-                return;
-            }
-            else {
-                if (mode.getInput() == 0) {
-
-                }
-            }
-            double progress = vanillaProgress = (float) (BlockUtils.getBlockHardness(block, (mode.getInput() == 2 && Utils.getTool(block) != -1) ? mc.thePlayer.inventory.getStackInSlot(Utils.getTool(block)) : mc.thePlayer.getHeldItem(), false, ignoreSlow) * breakSpeed.getInput());
-            if (lastProgress != 0 && breakProgress >= lastProgress - vanillaProgress) {
-                if (breakProgress >= lastProgress) {
-                    if (mode.getInput() == 2) {
-                        if (Raven.debug) {
-                            Utils.sendModuleMessage(this, "&7setting slot &7(&b" + mc.thePlayer.ticksExisted + "&7)");
-                        }
-                        setPacketSlot(Utils.getTool(block));
-                    }
-                }
-            }
-            breakProgress += progress;
-            breakProgressMap.put(blockPos, breakProgress);
-            if (breakProgress > 0) firstStop = false;
-            if (sendAnimations.isToggled()) {
-                mc.theWorld.sendBlockBreakProgress(mc.thePlayer.getEntityId(), blockPos, (int) ((breakProgress * 10) - 1));
-            }
-            lastProgress = 0;
-            while (lastProgress + progress < 1) {
-                lastProgress += progress;
-            }
-        }
-        else if (mode.getInput() == 1) {
-            swing();
-            startBreak(e, blockPos);
-            setSlot(Utils.getTool(block));
-            stopBreak(e, blockPos);
-        }
-    }
-
-    private void setSlot(int slot) {
-        if (slot == -1 || slot == mc.thePlayer.inventory.currentItem) {
-            return;
-        }
-        if (lastSlot == -1) {
-            lastSlot = mc.thePlayer.inventory.currentItem;
-        }
-        mc.thePlayer.inventory.currentItem = slot;
-    }
-
-    private boolean isCovered(BlockPos blockPos) {
-        for (EnumFacing enumFacing : EnumFacing.values()) {
-            BlockPos offset = blockPos.offset(enumFacing);
-            if (BlockUtils.replaceable(offset) || BlockUtils.notFull(BlockUtils.getBlock(offset)) ) {
-                return false;
-            }
-        }
-        return true;
     }
 }
