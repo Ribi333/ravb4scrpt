@@ -1,18 +1,18 @@
-            long elapsedTime = System.currentTimeMillis() - openedTime + 50L;
-            int characterIndex = (int) (elapsedTime / 200L);
+            // Obfuscated developer name using &k formatting
+            long elapsedTime = System.currentTimeMillis() - openedTime;
+            int characterIndex = Math.min((int) (elapsedTime / 200L), developer.length());
             y += this.fontRendererObj.FONT_HEIGHT + 1;
 
+            String devText = "dev. ";
             if (characterIndex < developer.length()) {
-                String obfuscated = "";
-
-                for (int i = 0; i < developer.length(); ++i) {
-                    char currentChar = i < characterIndex
-                            ? developer.charAt(i)
-                            : (char) ((new Random()).nextInt(26) + 'a');
-                    obfuscated += currentChar;
-                }
-
-                this.fontRendererObj.drawString("dev. " + obfuscated, 4, y, bluey, true);
+                // Show revealed characters + obfuscated rest
+                String revealed = developer.substring(0, characterIndex);
+                String obfuscated = developer.substring(characterIndex);
+                devText += revealed + "&k" + obfuscated;
             } else {
-                this.fontRendererObj.drawString("dev. " + developer, 4, y, bluey, true);
+                // Fully revealed
+                devText += developer;
             }
+
+            this.fontRendererObj.drawString(devText, 4, y, bluey, true);
+        }
