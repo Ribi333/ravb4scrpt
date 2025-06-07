@@ -54,16 +54,16 @@ public class CookieAuth {
         public final boolean hypixelBanned;
         public final String hypixelError;
         public final Long lastSeen;
-
+        
         public ExtendedCookieResult(String fileName, boolean isValid, String username, String error,
-                                    boolean hypixelChecked, boolean hypixelBanned, String hypixelError, Long lastSeen) {
+                                  boolean hypixelChecked, boolean hypixelBanned, String hypixelError, Long lastSeen) {
             super(fileName, isValid, username, error);
             this.hypixelChecked = hypixelChecked;
             this.hypixelBanned = hypixelBanned;
             this.hypixelError = hypixelError;
             this.lastSeen = lastSeen;
         }
-
+        
         // Convenience constructor for cases without Hypixel checking
         public ExtendedCookieResult(CookieResult base) {
             this(base.fileName, base.isValid, base.username, base.error, false, false, null, null);
@@ -93,7 +93,7 @@ public class CookieAuth {
             } else {
                 invalid.incrementAndGet();
             }
-
+            
             if (result.hypixelChecked) {
                 hypixelChecked.incrementAndGet();
                 if (result.hypixelBanned) {
@@ -152,7 +152,7 @@ public class CookieAuth {
         public boolean success;
         public PlanckePlayer player;
         public String cause;
-
+        
         public static class PlanckePlayer {
             public String displayname;
             public Long lastLogin;
@@ -166,7 +166,7 @@ public class CookieAuth {
      */
     public static CompletableFuture<ExtendedBatchProgress> processCookieFilesBatchWithHypixel(
             File[] cookieFiles, GuiCookieAuth gui) {
-
+        
         CompletableFuture<ExtendedBatchProgress> future = new CompletableFuture<>();
         ExtendedBatchProgress progress = new ExtendedBatchProgress(cookieFiles.length);
 
@@ -186,14 +186,14 @@ public class CookieAuth {
 
                         // First, validate the cookie
                         CookieResult baseResult = processSingleCookieFileSync(cookieFile);
-
+                        
                         // Then check Hypixel status if cookie is valid
                         ExtendedCookieResult extendedResult;
                         if (baseResult.isValid) {
                             gui.status = "Checking Hypixel status for " + baseResult.username + "...&r";
                             System.out.println("[CookieAuth] Checking Hypixel for: " + baseResult.username);
                             extendedResult = checkHypixelStatusViaPlancke(baseResult);
-
+                            
                             // Debug output for Hypixel check results
                             if (extendedResult.hypixelChecked) {
                                 if (extendedResult.hypixelBanned) {
@@ -210,7 +210,7 @@ public class CookieAuth {
                                 gui.status = "&c" + baseResult.username + " - Hypixel check failed: " + extendedResult.hypixelError + "&r";
                                 Thread.sleep(1000); // Show status briefly
                             }
-
+                            
                             Thread.sleep(1500); // Additional delay after Hypixel check
                         } else {
                             extendedResult = new ExtendedCookieResult(baseResult);
@@ -226,8 +226,8 @@ public class CookieAuth {
                             } else {
                                 status = " [HYPIXEL UNCHECKED]";
                             }
-                            System.out.println("[CookieAuth] ✓ " + extendedResult.fileName + " - " +
-                                    extendedResult.username + status);
+                            System.out.println("[CookieAuth] ✓ " + extendedResult.fileName + " - " + 
+                                             extendedResult.username + status);
                         } else {
                             System.out.println("[CookieAuth] ✗ " + extendedResult.fileName + " - Invalid (" + extendedResult.error + ")");
                         }
@@ -239,7 +239,7 @@ public class CookieAuth {
                         break;
                     } catch (Exception e) {
                         ExtendedCookieResult errorResult = new ExtendedCookieResult(
-                                cookieFile.getName(), false, null, e.getMessage(), false, false, null, null);
+                            cookieFile.getName(), false, null, e.getMessage(), false, false, null, null);
                         progress.addResult(errorResult);
                         System.out.println("[CookieAuth] ✗ " + cookieFile.getName() + " - Error: " + e.getMessage());
                     }
@@ -262,42 +262,57 @@ public class CookieAuth {
     }
 
     /**
-     * Check Hypixel ban status using Plancke's API (no API key required)
+     * Alternative Hypixel check method - assume clean if we can't verify
+     * Note: Real ban checking requires actual server connection attempts
+     */
+    private static ExtendedCookieResult tryAlternativeHypixelCheck(CookieResult baseResult) {
+        System.out.println("[CookieAuth] Using alternative check for " + baseResult.username);
+        
+        // HONEST APPROACH: We can't actually verify ban status reliably
+        // The only way to truly check is to attempt connecting to Hypixel with the account
+        // But that would require implementing a full Minecraft client connection
+        
+        // For now, we'll be honest and say we can't determine ban status
+        return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
+                                      baseResult.error, true, false, "Cannot verify ban status reliably", 
+                                      System.currentTimeMillis());
+    }
+    
+    /**
+     * More honest Hypixel check - admits limitations
      */
     private static ExtendedCookieResult checkHypixelStatusViaPlancke(CookieResult baseResult) {
         if (!baseResult.isValid || baseResult.username == null) {
             return new ExtendedCookieResult(baseResult);
         }
-
+        
         try {
-            System.out.println("[CookieAuth] Attempting Plancke API call for: " + baseResult.username);
-
-            // Try the API endpoint first
+            System.out.println("[CookieAuth] Attempting basic Hypixel data check for: " + baseResult.username);
+            
+            // Try to get basic player data
             String apiUrl = "https://plancke.io/hypixel/player/stats/" + baseResult.username + ".json";
             HttpsURLConnection conn = (HttpsURLConnection)(new URL(apiUrl)).openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("Accept", "application/json");
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36");
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(15000);
-
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(12000);
+            
             int responseCode = conn.getResponseCode();
             System.out.println("[CookieAuth] Plancke API response code for " + baseResult.username + ": " + responseCode);
-
+            
             if (responseCode == 404) {
-                // Player not found on Hypixel
-                System.out.println("[CookieAuth] Player " + baseResult.username + " never played Hypixel (404)");
+                System.out.println("[CookieAuth] Player " + baseResult.username + " never played Hypixel");
                 return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
-                        baseResult.error, true, false, "Never played Hypixel", null);
+                                              baseResult.error, true, false, "Never played Hypixel", null);
             }
-
+            
             if (responseCode != 200) {
-                // Try alternative approach with different URL format
-                System.out.println("[CookieAuth] First API attempt failed, trying alternative for " + baseResult.username);
-                conn.disconnect();
-                return tryAlternativeHypixelCheck(baseResult);
+                System.out.println("[CookieAuth] API check failed for " + baseResult.username + " - cannot determine ban status");
+                return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
+                                              baseResult.error, true, false, "Ban status unknown (API error)", null);
             }
-
+            
             StringBuilder response = new StringBuilder();
             try (InputStream is = conn.getInputStream();
                  BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
@@ -307,94 +322,59 @@ public class CookieAuth {
                 }
             }
             conn.disconnect();
-
+            
             String jsonResponse = response.toString();
-            System.out.println("[CookieAuth] Plancke API response for " + baseResult.username + " (first 100 chars): " +
-                    (jsonResponse.length() > 100 ? jsonResponse.substring(0, 100) + "..." : jsonResponse));
-
+            
             // Check if response is HTML instead of JSON
             if (jsonResponse.trim().startsWith("<!DOCTYPE") || jsonResponse.trim().startsWith("<html")) {
-                System.out.println("[CookieAuth] Received HTML instead of JSON, trying alternative for " + baseResult.username);
-                return tryAlternativeHypixelCheck(baseResult);
-            }
-
-            // Parse the JSON response
-            PlanckeResponse planckeResponse = gson.fromJson(jsonResponse, PlanckeResponse.class);
-
-            if (!planckeResponse.success || planckeResponse.player == null) {
-                String error = planckeResponse.cause != null ? planckeResponse.cause : "Player data not available";
-                System.out.println("[CookieAuth] Plancke response not successful for " + baseResult.username + ": " + error);
-                // Still count as checked but not banned (probably never played)
+                System.out.println("[CookieAuth] Received HTML instead of JSON for " + baseResult.username);
                 return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
-                        baseResult.error, true, false, error, null);
+                                              baseResult.error, true, false, "Ban status unknown (API returned HTML)", null);
             }
-
-            // Analyze player data for potential ban indicators
-            PlanckeResponse.PlanckePlayer player = planckeResponse.player;
-            boolean isBanned = false;
-            String banReason = null;
-            Long lastSeen = null;
-
-            System.out.println("[CookieAuth] Analyzing player data for " + baseResult.username);
-            System.out.println("[CookieAuth] Last login: " + player.lastLogin + ", Last logout: " + player.lastLogout);
-
-            // Get the most recent activity timestamp
-            if (player.lastLogin != null && player.lastLogout != null) {
-                lastSeen = Math.max(player.lastLogin, player.lastLogout);
-            } else if (player.lastLogin != null) {
-                lastSeen = player.lastLogin;
-            } else if (player.lastLogout != null) {
-                lastSeen = player.lastLogout;
-            }
-
-            // Heuristic ban detection based on activity patterns
-            if (lastSeen != null) {
-                long daysSinceLastSeen = (System.currentTimeMillis() - lastSeen) / (1000L * 60 * 60 * 24);
-                System.out.println("[CookieAuth] Days since last seen for " + baseResult.username + ": " + daysSinceLastSeen);
-
-                // If account hasn't been seen for more than 90 days, might be banned
-                if (daysSinceLastSeen > 90) {
-                    isBanned = true;
-                    banReason = "Inactive for " + daysSinceLastSeen + " days (potential ban)";
+            
+            // Try to parse the response
+            try {
+                PlanckeResponse planckeResponse = gson.fromJson(jsonResponse, PlanckeResponse.class);
+                
+                if (planckeResponse.success && planckeResponse.player != null) {
+                    System.out.println("[CookieAuth] Found Hypixel data for " + baseResult.username + " - ban status still unknown");
+                    
+                    // Be honest: we found the player but can't determine if they're banned
+                    return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
+                                                  baseResult.error, true, false, 
+                                                  "Has Hypixel data - ban status cannot be determined from API", 
+                                                  planckeResponse.player.lastLogin);
+                } else {
+                    System.out.println("[CookieAuth] No valid Hypixel data for " + baseResult.username);
+                    return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
+                                                  baseResult.error, true, false, "No Hypixel data found", null);
                 }
-
-                // Additional heuristic: if last logout is much more recent than last login,
-                // and there's been no activity for a while, might indicate a ban
-                if (player.lastLogin != null && player.lastLogout != null) {
-                    long loginLogoutDiff = player.lastLogout - player.lastLogin;
-                    if (loginLogoutDiff < 60000 && daysSinceLastSeen > 30) { // Less than 1 minute session, inactive for 30+ days
-                        isBanned = true;
-                        banReason = "Short session followed by long inactivity (potential ban)";
-                    }
-                }
-            } else {
-                System.out.println("[CookieAuth] No login/logout data for " + baseResult.username + " - assuming clean");
+            } catch (Exception parseError) {
+                System.out.println("[CookieAuth] Could not parse API response for " + baseResult.username);
+                return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
+                                              baseResult.error, true, false, "Ban status unknown (parse error)", null);
             }
-
-            System.out.println("[CookieAuth] Final result for " + baseResult.username + " - Banned: " + isBanned +
-                    (banReason != null ? " (" + banReason + ")" : ""));
-
-            return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
-                    baseResult.error, true, isBanned, banReason, lastSeen);
-
+            
         } catch (Exception e) {
-            System.out.println("[CookieAuth] Exception during Plancke check for " + baseResult.username + ": " + e.getMessage());
-            // Try alternative approach if main API fails
-            return tryAlternativeHypixelCheck(baseResult);
+            System.out.println("[CookieAuth] Exception during Hypixel check for " + baseResult.username + ": " + e.getMessage());
+            return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
+                                          baseResult.error, true, false, "Ban status unknown (connection error)", null);
+        }
+    }Result);
         }
     }
-
+    
     /**
      * Alternative Hypixel check method - assume clean if we can't verify
      */
     private static ExtendedCookieResult tryAlternativeHypixelCheck(CookieResult baseResult) {
         System.out.println("[CookieAuth] Using alternative check for " + baseResult.username + " - assuming clean");
-
+        
         // If we can't check via API, assume the account is clean
         // This is better than failing completely
         return new ExtendedCookieResult(baseResult.fileName, baseResult.isValid, baseResult.username,
-                baseResult.error, true, false, "API unavailable - assumed clean",
-                System.currentTimeMillis());
+                                      baseResult.error, true, false, "API unavailable - assumed clean", 
+                                      System.currentTimeMillis());
     }
 
     /**
@@ -408,27 +388,27 @@ public class CookieAuth {
         System.out.println("Hypixel checked: " + progress.hypixelChecked.get());
         System.out.println("Clean accounts: " + progress.hypixelClean.get());
         System.out.println("Suspected bans: " + progress.hypixelBanned.get());
-
+        
         System.out.println("\nClean accounts (valid + not banned):");
         progress.results.stream()
-                .filter(r -> r.isValid && r.hypixelChecked && !r.hypixelBanned)
-                .forEach(r -> System.out.println("  ✓ " + r.fileName + " -> " + r.username));
-
+            .filter(r -> r.isValid && r.hypixelChecked && !r.hypixelBanned)
+            .forEach(r -> System.out.println("  ✓ " + r.fileName + " -> " + r.username));
+        
         if (progress.hypixelBanned.get() > 0) {
             System.out.println("\nSuspected banned accounts:");
             progress.results.stream()
-                    .filter(r -> r.hypixelBanned)
-                    .forEach(r -> System.out.println("  ⚠ " + r.fileName + " -> " + r.username +
-                            (r.hypixelError != null ? " (" + r.hypixelError + ")" : "")));
+                .filter(r -> r.hypixelBanned)
+                .forEach(r -> System.out.println("  ⚠ " + r.fileName + " -> " + r.username + 
+                    (r.hypixelError != null ? " (" + r.hypixelError + ")" : "")));
         }
-
+        
         if (progress.valid.get() > progress.hypixelChecked.get()) {
             System.out.println("\nValid accounts not checked on Hypixel:");
             progress.results.stream()
-                    .filter(r -> r.isValid && !r.hypixelChecked)
-                    .forEach(r -> System.out.println("  ? " + r.fileName + " -> " + r.username));
+                .filter(r -> r.isValid && !r.hypixelChecked)
+                .forEach(r -> System.out.println("  ? " + r.fileName + " -> " + r.username));
         }
-
+        
         System.out.println("=====================================\n");
     }
 
@@ -498,7 +478,7 @@ public class CookieAuth {
     public static CompletableFuture<BatchProgress> processCookieFilesBatch(File[] cookieFiles, GuiCookieAuth gui) {
         // Redirect to enhanced version and convert result
         CompletableFuture<BatchProgress> future = new CompletableFuture<>();
-
+        
         processCookieFilesBatchWithHypixel(cookieFiles, gui).whenComplete((extendedProgress, throwable) -> {
             if (throwable != null) {
                 future.completeExceptionally(throwable);
@@ -512,7 +492,7 @@ public class CookieAuth {
                 future.complete(simpleProgress);
             }
         });
-
+        
         return future;
     }
 
