@@ -5,17 +5,14 @@ List<CPacket> blinkPackets = Collections.synchronizedList(new ArrayList<>());
 Entity target = modules.getKillAuraTarget();
 Entity player = client.getPlayer();
 int mode = (int) modules.getSlider(scriptName, "Autoblock");
-//vertical tower
-boolean aligningVT, alignedVT, VTplaced;
-double firstX;
-double VTmotiony;
-boolean vvt, vtm;
-boolean hasTowered, hasTowered2;
-boolean dmg;
-int dmgTicks, vtBdelay;
+
 
 void onLoad() {
-    registerThingies();
+    shitauthload();
+}
+
+void onEnable() {
+    shitauthenable();
 }
 
 void onPreUpdate() {
@@ -108,43 +105,9 @@ if (mode == 1) { // VIA
             break;
         }
     }
-    double fixedPos = (int) pos.x;
-    if (modules.getButton(scriptName, "Vertical Tower")) {
-        if (getJumpLevel() == 0 && isTowering() && !isMoving() && !dmg) {
-            if (!alignedVT) {
-                if (player.onGround()) {
-                    if (!aligningVT) firstX = fixedPos;
-                    client.setMotion(0.22, motion.y, motion.z);
-                    hasTowered2 = aligningVT = true;
-                }
-                if (aligningVT && fixedPos > firstX || alignedVT) {
-                    alignedVT = true;
-                }
-                state.yaw = 90;
-                state.pitch = 80;
-            }
-            if (alignedVT) {
-                client.setMotion(0, VTmotiony, 0);
-                if (VTplaced) {
-                    state.yaw = 270;
-                    state.pitch = 88;
-                } else {
-                    state.yaw = 90;
-                    state.pitch = 80;
-                }
-            }
-        } else {
-            aligningVT = alignedVT = VTplaced = false;
-            vtBdelay = 0;
-        }
-    }    
 }
 
-void onPreMotion() {
-    //Damage check
-    if (dmg && dmgTicks > 0) dmgTicks--;
-    if (dmg && dmgTicks == 0) dmg = false;
-}
+
 
 boolean onPacketSent(CPacket packet) {
     if (packet instanceof C01) {
@@ -200,46 +163,61 @@ boolean onPacketSent(CPacket packet) {
     }
     return true;
 }
+
 boolean inAttackRange() {
     if (modules.getKillAuraTarget() == null) return false;
     return client.getPlayer().getPosition().distanceTo(modules.getKillAuraTarget().getPosition()) <= 3.19;//3.39/3.11
 }
+
 void onDisable() {
     client.sendPacketNoEvent(new C07(new Vec3(0, 0, 0), "RELEASE_USE_ITEM", "DOWN"));
 }
+
 void registerThingies() {
-    modules.registerDescription("* KillAura:");
+    modules.registerDescription("> KillAura:");
     modules.registerSlider("Autoblock", "", 0, autoblocks);
     modules.registerDescription("> Via is 7 aps, Myau 1.8 is 5 aps <");
     modules.registerButton("Switch KA ab to FAKE", false);
-    modules.registerDescription("* Scaffold:");
-    modules.registerButton("Vertical Tower", false);
-    modules.registerDescription("* Miscellaneous:");
+    modules.registerDescription("> Miscellaneous:");
     modules.registerButton("Selfban Command", true);
     modules.registerButton("Queue Commands", true);
     modules.registerDescription("made by @lquifi and @vivivox");
 }
+
 boolean holdingSword() {
     return player.getHeldItem() != null && player.getHeldItem().type.contains("Sword");
 }
-boolean isMoving() {
-    if (keybinds.isKeyDown(17) || keybinds.isKeyDown(30) || keybinds.isKeyDown(31) || keybinds.isKeyDown(32)) {
-        return true;
+
+boolean isAuthorized() {
+    String allowedUIDs = "420,383,392";
+    String allowedUsers = "lquifi,drag,Marko1";
+
+    String uidStr = String.valueOf(client.getUID());
+    String userStr = client.getUser();
+
+    boolean uidAllowed = Arrays.asList(allowedUIDs.split(",")).contains(uidStr);
+    boolean userAllowed = Arrays.asList(allowedUsers.split(",")).contains(userStr);
+
+    return uidAllowed && userAllowed;
+}
+
+
+
+void shitauthload() {
+    if (isAuthorized()) {
+        registerThingies();
+    } else {
+        modules.disable(scriptName);
+        client.print("&7[&bL&7] &cYou are not authorized!");
     }
-    return false;
 }
-boolean isTowering() {
-    return (isMoving() && keybinds.isKeyDown(57) && !modules.isEnabled("Long Jump"));
-}
-boolean isVerticallyTowering() {
-    return keybinds.isKeyDown(57) && !isMoving();
-}
-int getJumpLevel() {
-    for (Object[] effect : client.getPlayer().getPotionEffects()) {
-        if (((String) effect[1]).contains("jump")) {
-            return ((int) effect[2]) + 1;
-        }
-        return 0;
+
+void shitauthenable() {
+    if (!isAuthorized()) {
+        modules.disable(scriptName);
+        client.print("&7[&bL&7] &cYou are not authorized!");
     }
-    return 0;
 }
+
+
+
