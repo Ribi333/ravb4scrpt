@@ -8,14 +8,12 @@ import keystrokesmod.clickgui.components.impl.ModuleComponent;
 import keystrokesmod.module.Module;
 import keystrokesmod.module.impl.client.CommandLine;
 import keystrokesmod.module.impl.client.Gui;
-import keystrokesmod.module.impl.client.Settings;
 import keystrokesmod.script.ScriptDefaults;
 import keystrokesmod.utility.Commands;
-import keystrokesmod.utility.RenderUtils;
 import keystrokesmod.utility.Timer;
 import keystrokesmod.utility.Utils;
-import keystrokesmod.utility.render.shader.BlurUtils;
-import keystrokesmod.utility.render.shader.RoundedUtils;
+import keystrokesmod.utility.shader.BlurUtils;
+import keystrokesmod.utility.shader.RoundedUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
@@ -29,11 +27,13 @@ import net.minecraftforge.fml.client.config.GuiButtonExt;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
 import java.awt.*;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.Random;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -54,10 +54,12 @@ public class ClickGui extends GuiScreen {
 
 
     private String welcomeText = "welcome,";
-    private String userName = "marko";
-    private String userNumber = " #1";
-    private String clientName = "raven update 60000000000";
-    private String developer = "marko";
+    public static String userName = "ribi";
+    public static String userNumber = " #1";
+    private String clientName = "mosqui update 7";
+    private String developer = "vivivox";
+    private String mosquiv2userName = "ribi";
+    private String mosquiv2userNumber = "(1)";
     private boolean firstTimeOpening = true;
     private long firstOpenTime = 0;
     private boolean showingWelcome = false;
@@ -120,7 +122,6 @@ public class ClickGui extends GuiScreen {
         if (Gui.backgroundBlur.getInput() != 0) {
             BlurUtils.prepareBlur();
             RoundedUtils.drawRound(0, 0, this.width, this.height, 0.0f, true, Color.black);
-
             float inputToRange = (float) (3 * ((Gui.backgroundBlur.getInput() + 35) / 100));
             BlurUtils.blurEnd(2, this.blurSmooth.getValueFloat(0, inputToRange, 1));
         }
@@ -132,12 +133,13 @@ public class ClickGui extends GuiScreen {
             int h = this.height / 4;
             int wd = this.width / 2;
             int w_c = 30 - this.logoSmoothWidth.getValueInt(0, 30, 3);
-            this.drawCenteredString(this.fontRendererObj, "r", wd + 1 - w_c, h - 25, Utils.getChroma(2L, 1500L));
-            this.drawCenteredString(this.fontRendererObj, "a", wd - w_c, h - 15, Utils.getChroma(2L, 1200L));
-            this.drawCenteredString(this.fontRendererObj, "v", wd - w_c, h - 5, Utils.getChroma(2L, 900L));
-            this.drawCenteredString(this.fontRendererObj, "e", wd - w_c, h + 5, Utils.getChroma(2L, 600L));
-            this.drawCenteredString(this.fontRendererObj, "n", wd - w_c, h + 15, Utils.getChroma(2L, 300L));
-            this.drawCenteredString(this.fontRendererObj, "bS", wd + 1 + w_c, h + 30, Utils.getChroma(2L, 0L));
+            this.drawCenteredString(this.fontRendererObj, "m", wd + 1 - w_c, h - 25, Utils.getChroma(2L, 1500L));
+            this.drawCenteredString(this.fontRendererObj, "o", wd - w_c, h - 15, Utils.getChroma(2L, 1200L));
+            this.drawCenteredString(this.fontRendererObj, "s", wd - w_c, h - 5, Utils.getChroma(2L, 900L));
+            this.drawCenteredString(this.fontRendererObj, "q", wd - w_c, h + 5, Utils.getChroma(2L, 600L));
+            this.drawCenteredString(this.fontRendererObj, "u", wd - w_c, h + 15, Utils.getChroma(2L, 300L));
+            //this.drawCenteredString(this.fontRendererObj, "bS", wd + 1 + w_c, h + 30, Utils.getChroma(2L, 0L));
+            this.drawCenteredString(this.fontRendererObj, "i", wd - w_c, h + 20, Utils.getChroma(2L, 300L));
             this.drawVerticalLine(wd - 10 - w_c, h - 30, h + 43, Color.white.getRGB());
             this.drawVerticalLine(wd + 10 + w_c, h - 30, h + 43, Color.white.getRGB());
             if (this.logoSmoothLength != null) {
@@ -232,7 +234,7 @@ public class ClickGui extends GuiScreen {
 
                 // intro effect variables
                 String welcomePart1 = "welcome ";
-                String welcomePart2 = ", update 5.1";
+                String welcomePart2 = ", update 7";
 
                 int totalWidth = this.fontRendererObj.getStringWidth(welcomePart1 + userName + welcomePart2);
                 int startXTotal = (centerX / 4) - (totalWidth / 2);
@@ -246,7 +248,7 @@ public class ClickGui extends GuiScreen {
                 //int welcomeColor = ((int)(alpha * 255) << 24) | 0xF65C5C; // red
                 this.fontRendererObj.drawString(welcomePart1, startXTotal, centerY / 4, welcomeColor, true);
                 if (!firstSent) {
-                    ScriptDefaults.client.print("&7[&dR&7] hey &b" + userName + "&7, yay! &bupdate 5.1&7!");
+                    ScriptDefaults.client.print("&6[&eM&6] &7welcome &e" + userName + "&7, yay! &eupdate 7&7!");
                     firstSent = true;
                 }
 
@@ -258,14 +260,10 @@ public class ClickGui extends GuiScreen {
                     int blueChroma = mixColors(baseChroma, bluey, 0.7f);
                     int charColor = (int)(alpha * 255) << 24 | (blueChroma & 0x00FFFFFF);
                     this.fontRendererObj.drawString(String.valueOf(c), startX, centerY / 4, charColor, true);
-
                     startX += this.fontRendererObj.getCharWidth(c);
                 }
 
-
-
                 this.fontRendererObj.drawString(welcomePart2, startX, centerY / 4, welcomeColor, true);
-
 
                 GlStateManager.popMatrix();
 
@@ -279,28 +277,28 @@ public class ClickGui extends GuiScreen {
             int y = displaySize[1] + (8 - getValueInt(0, 30, 2));
             int test = displaySize[1] + (8 - getValueInt(0, 40, 2));
 
-
-
-
-                this.fontRendererObj.drawString(clientName, 4, y, bluey, true);
-                this.fontRendererObj.drawString(welcomeText, 4, test, bluey, true);
-
+            this.fontRendererObj.drawString(clientName, 4, y, bluey, true);
+            this.fontRendererObj.drawString(welcomeText, 4, test, bluey, true);
 
             // rainbow username
             int startX = 48;
             for (int i = 0; i < userName.length(); i++) {
                 char c = userName.charAt(i);
                 int charColor = Utils.getChroma(2L, -i * 100L);
-
                 this.fontRendererObj.drawString(String.valueOf(c), startX, test, charColor, true);
-
-
                 startX += this.fontRendererObj.getCharWidth(c);
             }
-
             this.fontRendererObj.drawString(userNumber, startX, test, bluey, true);
 
-
+            // rainbow mosqui username
+            /*int startX = 48;
+            for (int i = 0; i < mosquiv2userName.length(); i++) {
+                char c = mosquiv2userName.charAt(i);
+                int charColor = Utils.getChroma(2L, -i * 100L);
+                this.fontRendererObj.drawString(String.valueOf(c), startX, test, charColor, true);
+                startX += this.fontRendererObj.getCharWidth(c);
+            }
+            this.fontRendererObj.drawString(mosquiv2userNumber, startX, test, bluey, true);*/
 
             long elapsedTime = System.currentTimeMillis() - openedTime;
             int characterIndex = Math.min((int) (elapsedTime / 200L), developer.length());
@@ -315,9 +313,7 @@ public class ClickGui extends GuiScreen {
                 devText += developer;
             }
 
-
             this.fontRendererObj.drawString(devText, 4, y, bluey, true);
-            
         }
     }
 
