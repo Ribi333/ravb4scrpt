@@ -30,7 +30,7 @@ void n::Dump(const char* baseClass, RecvTable* table, const std::uint32_t offset
 			prop->dataTable->tableName[0] == 'D')
 			Dump(baseClass, prop->dataTable, std::uint32_t(offset + prop->offset));
 
-		data[fnv::Hash(std::format("{}->{}", baseClass, prop->varName).data())] =
+		n::data[fnv::Hash(std::format("{}->{}", baseClass, prop->varName).data())] =
 		{
 			prop,
 			std::uint32_t(offset + prop->offset)
@@ -40,10 +40,10 @@ void n::Dump(const char* baseClass, RecvTable* table, const std::uint32_t offset
 
 std::uint32_t n::GetOffset(const std::uint32_t hash)
 {
-	return data.at(hash).offset;
+	return n::data.at(hash).offset;
 }
 
 RecvProp* n::GetProp(const std::uint32_t hash)
 {
-	return data.at(hash).prop;
+	return n::data.at(hash).prop;
 }
