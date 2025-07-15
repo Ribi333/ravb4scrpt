@@ -1,541 +1,1873 @@
-package keystrokesmod.clickgui;
+package keystrokesmod.module.impl.player;
 
 import keystrokesmod.Raven;
-import keystrokesmod.clickgui.components.Component;
-import keystrokesmod.clickgui.components.impl.BindComponent;
-import keystrokesmod.clickgui.components.impl.CategoryComponent;
-import keystrokesmod.clickgui.components.impl.ModuleComponent;
+import keystrokesmod.event.*;
+import keystrokesmod.mixin.impl.accessor.IAccessorEntityPlayerSP;
+import keystrokesmod.mixin.interfaces.IMixinItemRenderer;
 import keystrokesmod.module.Module;
-import keystrokesmod.module.impl.client.CommandLine;
-import keystrokesmod.module.impl.client.Gui;
-import keystrokesmod.script.ScriptDefaults;
-import keystrokesmod.utility.Commands;
+import keystrokesmod.module.ModuleManager;
+import keystrokesmod.module.impl.client.Settings;
+import keystrokesmod.module.impl.movement.Bhop;
+import keystrokesmod.module.impl.movement.LongJump;
+import keystrokesmod.module.setting.impl.ButtonSetting;
+import keystrokesmod.module.setting.impl.GroupSetting;
+import keystrokesmod.module.setting.impl.SliderSetting;
+import keystrokesmod.utility.*;
 import keystrokesmod.utility.Timer;
-import keystrokesmod.utility.Utils;
-import keystrokesmod.utility.shader.BlurUtils;
-import keystrokesmod.utility.shader.RoundedUtils;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiButton;
-import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.GuiTextField;
-import net.minecraft.client.gui.ScaledResolution;
-import net.minecraft.client.gui.inventory.GuiInventory;
-import net.minecraft.client.renderer.GlStateManager;
-import net.minecraftforge.client.event.GuiScreenEvent;
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.fml.client.config.GuiButtonExt;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockAir;
+import net.minecraft.block.BlockTNT;
+import net.minecraft.client.settings.KeyBinding;
+import net.minecraft.item.ItemBlock;
+import net.minecraft.item.ItemStack;
+import net.minecraft.network.play.client.C03PacketPlayer;
+import net.minecraft.network.play.client.C07PacketPlayerDigging;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
+import net.minecraft.network.play.client.C0APacketAnimation;
+import net.minecraft.network.play.server.S12PacketEntityVelocity;
+import net.minecraft.network.play.server.S27PacketExplosion;
+import net.minecraft.potion.PotionEffect;
+import net.minecraft.util.*;
+import net.minecraftforge.client.event.MouseEvent;
+import net.minecraftforge.fml.common.FMLCommonHandler;
+import net.minecraftforge.fml.common.eventhandler.EventPriority;
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
-import org.lwjgl.opengl.GL11;
-import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
-import java.awt.*;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.Random;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class ClickGui extends GuiScreen {
-    private ScheduledFuture sf;
-    private Timer logoSmoothWidth;
-    private Timer logoSmoothLength;
-    private Timer smoothEntity;
-    private Timer backgroundFade;
-    private Timer blurSmooth;
-    private ScaledResolution sr;
-    private GuiButtonExt commandLineSend;
-    private GuiTextField commandLineInput;
-    public static ArrayList<CategoryComponent> categories;
-    public int originalScale;
-    public int previousScale;
-    private static boolean isNotFirstOpen;
+public class Scaffold extends Module {
+    private final SliderSetting motion;
+    public SliderSetting rotation, fakeRotation;
+    private SliderSetting sprint;
+    private SliderSetting floatFirstJump;
+    private SliderSetting fastScaffold;
+    private SliderSetting predictionMode;
+    private SliderSetting multiPlace;
 
+    public ButtonSetting autoSwap;
+    private ButtonSetting fastOnRMB;
+    public ButtonSetting highlightBlocks;
+    private ButtonSetting jumpFacingForward;
+    public ButtonSetting safeWalk;
+    public ButtonSetting showBlockCount;
+    public ButtonSetting showModernBlockCount;
+    private ButtonSetting silentSwing;
+    private ButtonSetting prioritizeSprintWithSpeed;
 
-    private String welcomeText = "welcome,";
-    public static String userName = "ribi";
-    public static String userNumber = " #1";
-    private String clientName = "mosqui update 7";
-    private String developer = "vivivox";
-    private String mosquiv2userName = "ribi";
-    private String mosquiv2userNumber = "(1)";
-    private boolean firstTimeOpening = true;
-    private long firstOpenTime = 0;
-    private boolean showingWelcome = false;
-    private int bluey = (new Color(57, 146, 229)).getRGB();
-    private int pinky = (new Color(255, 85, 255)).getRGB();
-    private boolean firstSent;
+    private String[] rotationModes = new String[] { "§cDisabled", "Simple", "Offset", "Precise", "Prediction A", "Offset 3" };
+    private String[] fakeRotationModes = new String[] { "§cDisabled", "None", "Strict", "Smooth", "Spin", "Precise" };
+    private String[] sprintModes = new String[] { "§cDisabled", "Vanilla", "Float" };
+    private String[] fastScaffoldModes = new String[] { "§cDisabled", "Jump A", "Jump B", "Jump B Low", "Jump E", "Keep-Y", "Keep-Y Low", "Prediction" };
+    private String[] predictionModes = new String[] { "slow", "test fast" };
+    private String[] multiPlaceModes = new String[] { "§cDisabled", "1 extra", "2 extra", "3 extra", "4 extra" };
 
-    private boolean clickGuiOpen = false;
-    private long openedTime;
+    //Highlight blocks
+    public Map<BlockPos, Timer> highlight = new HashMap<>();
+    public boolean canBlockFade;
 
-    public float updates;
-    public long last;
-    private float cached;
+    //Block count
+    private ScaffoldBlockCount scaffoldBlockCount;
 
-    public ClickGui() {
-        categories = new ArrayList();
-        int y = 5;
-        Module.category[] values;
-        int length = (values = Module.category.values()).length;
+    //swapping related
+    public AtomicInteger lastSlot = new AtomicInteger(-1);
+    private int spoofSlot;
+    public boolean hasSwapped;
+    private int blockSlot = -1;
 
-        for (int i = 0; i < length; ++i) {
-            Module.category c = values[i];
-            CategoryComponent categoryComponent = new CategoryComponent(c);
-            categoryComponent.setY(y, false);
-            categories.add(categoryComponent);
-            y += 20;
+    //placements related
+    private boolean hasPlaced, finishProcedure, stopUpdate, stopUpdate2, canPlace;
+    private PlaceData lastPlacement;
+    private EnumFacing[] facings = { EnumFacing.EAST, EnumFacing.WEST, EnumFacing.NORTH, EnumFacing.SOUTH, EnumFacing.UP };
+    private BlockPos[] offsets = { new BlockPos(-1, 0, 0), new BlockPos(1, 0, 0), new BlockPos(0, 0, 1), new BlockPos(0, 0, -1), new BlockPos(0, -1, 0) };
+    private Vec3 targetBlock;
+    private PlaceData blockInfo;
+    private Vec3 blockPos, hitVec, lookVec;
+
+    //bypass related
+    private boolean rotateForward;
+    private double startYPos = -1;
+    public boolean fastScaffoldKeepY;
+    private boolean firstKeepYPlace;
+    private boolean rotatingForward;
+    private int keepYTicks;
+    public boolean lowhop;
+    private int rotationDelay;
+    private boolean floatJumped;
+    private boolean floatStarted;
+    private boolean floatWasEnabled;
+    private boolean floatKeepY;
+    public int offsetDelay;
+    public boolean placedVP;
+    private boolean jump;
+    private int floatTicks;
+
+    //disable checks
+    public boolean moduleEnabled;
+    public boolean isEnabled;
+    private boolean disabledModule;
+    private boolean dontDisable, towerEdge;
+    private int disableTicks;
+    private int scaffoldTicks;
+
+    //rotation related
+    private boolean was451, was452;
+    private float minPitch, minOffset, pOffset;
+    private float edge;
+    private long firstStroke, yawEdge, vlS, swDelay;
+    private float lastEdge2, yawAngle, theYaw;
+    private boolean enabledOffGround = false;
+    private float[] blockRotations;
+    public float yaw, pitch, blockYaw, yawOffset, lastOffset;
+    private boolean set2;
+    private float maxOffset;
+    private int sameMouse;
+    private int randomF, yawChanges, dynamic;
+    private boolean getVTR, resetm;
+    private float VTRY;
+    private float normalYaw, normalPitch;
+    private int switchvl;
+    private int dt;
+    private float getSmooth, lastYawS, smoothedYaw;
+    private boolean neg;
+    private float yawWithOffset;
+    private int rt;
+    //fake rotations
+    private float fakeYaw, fakePitch;
+    private float fakeYaw1, fakeYaw2;
+    private SliderSetting motiontwo;
+    //offset 3
+    private float dynamicYawOffset = 0;
+    private float dynamicPitchOffset = 0;
+    private int rotationUpdateTicks = 0;
+    private float targetDynamicYaw = 0;
+    private float targetDynamicPitch = 0;
+    private Random rotationRandom = new Random();
+
+    public Scaffold() {
+        super("Scaffold", category.player);
+        this.registerSetting(motion = new SliderSetting("Motion", "%", 100, 50, 150, 1));
+        this.registerSetting(motiontwo = new SliderSetting("Fast Scaffold Motion", "%", 100, 50, 150, 1));
+        this.registerSetting(rotation = new SliderSetting("Rotation", 1, rotationModes));
+        this.registerSetting(fakeRotation = new SliderSetting("Rotation (fake)", 0, fakeRotationModes));
+        this.registerSetting(sprint = new SliderSetting("Sprint mode", 0, sprintModes));
+        this.registerSetting(prioritizeSprintWithSpeed = new ButtonSetting("Prioritize sprint with speed", false));
+        this.registerSetting(floatFirstJump = new SliderSetting("§eFloat §rfirst jump speed", "%", 100, 50, 100, 1));
+        this.registerSetting(fastScaffold = new SliderSetting("Fast scaffold", 0, fastScaffoldModes));
+        this.registerSetting(predictionMode = new SliderSetting("Prediction Mode", 1, predictionModes));
+
+        this.registerSetting(multiPlace = new SliderSetting("Multi-place", 0, multiPlaceModes));
+
+        this.registerSetting(autoSwap = new ButtonSetting("Auto swap", true));
+        this.registerSetting(fastOnRMB = new ButtonSetting("Fast on RMB", true));
+        this.registerSetting(highlightBlocks = new ButtonSetting("Highlight blocks", true));
+        this.registerSetting(jumpFacingForward = new ButtonSetting("Jump facing forward", false));
+        this.registerSetting(safeWalk = new ButtonSetting("Safewalk", true));
+        this.registerSetting(showBlockCount = new ButtonSetting("Show block count", false));
+        this.registerSetting(showModernBlockCount = new ButtonSetting("Show Modern Block Count", true));
+        this.registerSetting(silentSwing = new ButtonSetting("Silent swing", false));
+
+        this.alwaysOn = true;
+    }
+
+    public void guiUpdate() {
+        this.prioritizeSprintWithSpeed.setVisible(sprint.getInput() > 0, this);
+        this.floatFirstJump.setVisible(sprint.getInput() == 2, this);
+    }
+
+    public void onDisable() {
+        if (ModuleManager.tower.canTower() && (ModuleManager.tower.dCount == 0 || !Utils.isMoving())) {
+            towerEdge = true;
+        }
+        disabledModule = true;
+        moduleEnabled = false;
+        dynamicYawOffset = dynamicPitchOffset = 0;
+        rotationUpdateTicks = 0;
+
+        if (!isEnabled) {
+            scaffoldBlockCount.beginFade();
         }
     }
 
-    public void initMain() {
-        (this.logoSmoothWidth = this.smoothEntity = this.blurSmooth = this.backgroundFade = new Timer(500.0F)).start();
-        this.sf = Raven.getScheduledExecutor().schedule(() -> {
-            (this.logoSmoothLength = new Timer(650.0F)).start();
-        }, 650L, TimeUnit.MILLISECONDS);
+    public void onEnable() {
+        dt = 0;
+        isEnabled = true;
+        moduleEnabled = true;
+        ModuleUtils.fadeEdge = 0;
+        edge = -999999929;
+        minPitch = 80F;
+        if (!mc.thePlayer.onGround) {
+            rotationDelay = 2;
+            enabledOffGround = true;
+        }
+        lastEdge2 = mc.thePlayer.rotationYaw;
+
+        if (fastScaffold.getInput() == 7) {
+            ModuleManager.sprint.onUpdate();
+            //Utils.print("Sprint disabled.");
+        }
+
+        FMLCommonHandler.instance().bus().register(scaffoldBlockCount = new ScaffoldBlockCount(mc));
+        lastSlot.set(-1);
     }
 
-    @Override
-    public void initGui() {
-        super.initGui();
-        if (!isNotFirstOpen) {
-            isNotFirstOpen = true;
-            this.previousScale = (int) Gui.guiScale.getInput();
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void onMouse(MouseEvent e) {
+        if (!isEnabled) {
+            return;
         }
-        if (this.previousScale != Gui.guiScale.getInput()) {
-            for (CategoryComponent categoryComponent : categories) {
-                categoryComponent.limitPositions();
-            }
-        }
-        this.sr = new ScaledResolution(this.mc);
-        for (CategoryComponent categoryComponent : categories) {
-            categoryComponent.setScreenHeight(this.sr.getScaledHeight());
-        }
-        (this.commandLineInput = new GuiTextField(1, this.mc.fontRendererObj, 22, this.height - 100, 150, 20)).setMaxStringLength(256);
-        this.buttonList.add(this.commandLineSend = new GuiButtonExt(2, 22, this.height - 70, 150, 20, "Send"));
-        this.commandLineSend.visible = CommandLine.opened;
-        this.previousScale = (int) Gui.guiScale.getInput();
+        KeyBinding.setKeyBindState(mc.gameSettings.keyBindAttack.getKeyCode(), false);
+        KeyBinding.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), false);
+        e.setCanceled(true);
     }
 
-    public void drawScreen(int x, int y, float p) {
-        if (Gui.backgroundBlur.getInput() != 0) {
-            BlurUtils.prepareBlur();
-            RoundedUtils.drawRound(0, 0, this.width, this.height, 0.0f, true, Color.black);
-            float inputToRange = (float) (3 * ((Gui.backgroundBlur.getInput() + 35) / 100));
-            BlurUtils.blurEnd(2, this.blurSmooth.getValueFloat(0, inputToRange, 1));
+    @SubscribeEvent
+    public void onPreMotion(PreMotionEvent e) {
+        if (!Utils.nullCheck()) {
+            return;
         }
-        if (Gui.darkBackground.isToggled()) {
-            drawRect(0, 0, this.width, this.height, (int) (this.backgroundFade.getValueFloat(0.0F, 0.7F, 2) * 255.0F) << 24);
+        normalYaw = mc.thePlayer.rotationYaw;
+        normalPitch = mc.thePlayer.rotationPitch;
+        if (dt > 0) {
+            return;
         }
-        int r;
-        if (!Gui.removeWatermark.isToggled()) {
-            int h = this.height / 4;
-            int wd = this.width / 2;
-            int w_c = 30 - this.logoSmoothWidth.getValueInt(0, 30, 3);
-            this.drawCenteredString(this.fontRendererObj, "m", wd + 1 - w_c, h - 25, Utils.getChroma(2L, 1500L));
-            this.drawCenteredString(this.fontRendererObj, "o", wd - w_c, h - 15, Utils.getChroma(2L, 1200L));
-            this.drawCenteredString(this.fontRendererObj, "s", wd - w_c, h - 5, Utils.getChroma(2L, 900L));
-            this.drawCenteredString(this.fontRendererObj, "q", wd - w_c, h + 5, Utils.getChroma(2L, 600L));
-            this.drawCenteredString(this.fontRendererObj, "u", wd - w_c, h + 15, Utils.getChroma(2L, 300L));
-            //this.drawCenteredString(this.fontRendererObj, "bS", wd + 1 + w_c, h + 30, Utils.getChroma(2L, 0L));
-            this.drawCenteredString(this.fontRendererObj, "i", wd - w_c, h + 20, Utils.getChroma(2L, 300L));
-            this.drawVerticalLine(wd - 10 - w_c, h - 30, h + 43, Color.white.getRGB());
-            this.drawVerticalLine(wd + 10 + w_c, h - 30, h + 43, Color.white.getRGB());
-            if (this.logoSmoothLength != null) {
-                r = this.logoSmoothLength.getValueInt(0, 20, 2);
-                this.drawHorizontalLine(wd - 10, wd - 10 + r, h - 29, -1);
-                this.drawHorizontalLine(wd + 10, wd + 10 - r, h + 42, -1);
-            }
-        }
-
-        for (CategoryComponent c : categories) {
-            c.render(this.fontRendererObj);
-            c.mousePosition(x, y);
-
-            for (Component m : c.getModules()) {
-                m.drawScreen(x, y);
-            }
-        }
-
-        GL11.glColor3f(1.0f, 1.0f, 1.0f);
-        if (!Gui.removePlayerModel.isToggled()) {
-            GlStateManager.pushMatrix();
-            GlStateManager.disableBlend();
-            GuiInventory.drawEntityOnScreen(this.width + 15 - this.smoothEntity.getValueInt(0, 40, 2), this.height - 10, 40, (float) (this.width - 25 - x), (float) (this.height - 50 - y), this.mc.thePlayer);
-            GlStateManager.enableBlend();
-            GlStateManager.popMatrix();
-        }
-
-        onRenderTick(p);
-
-        if (CommandLine.opened) {
-            if (!this.commandLineSend.visible) {
-                this.commandLineSend.visible = true;
-            }
-
-            r = CommandLine.animate.isToggled() ? CommandLine.animation.getValueInt(0, 200, 2) : 200;
-            if (CommandLine.closed) {
-                r = 200 - r;
-                if (r == 0) {
-                    CommandLine.closed = false;
-                    CommandLine.opened = false;
-                    this.commandLineSend.visible = false;
+        //Fake rotations
+        if (fakeRotation.getInput() > 0) {
+            if (fakeRotation.getInput() == 1) {
+                fakeYaw = normalYaw;
+                fakePitch = normalPitch;
+            } else if (fakeRotation.getInput() == 2) {
+                fakeYaw = fakeYaw1;
+                if (blockRotations != null) {
+                    fakePitch = blockRotations[1] + 5;
+                } else {
+                    fakePitch = 80f;
                 }
-            }
-            drawRect(0, 0, r, this.height, -1089466352);
-            this.drawHorizontalLine(0, r - 1, (this.height - 345), -1);
-            this.drawHorizontalLine(0, r - 1, (this.height - 115), -1);
-            drawRect(r - 1, 0, r, this.height, -1);
-            Commands.rc(this.fontRendererObj, this.height, r, this.sr.getScaleFactor());
-            int x2 = r - 178;
-            this.commandLineInput.xPosition = x2;
-            this.commandLineSend.xPosition = x2;
-            this.commandLineInput.drawTextBox();
-            super.drawScreen(x, y, p);
-        }
-        else if (CommandLine.closed) {
-            CommandLine.closed = false;
-        }
-    }
+            } else if (fakeRotation.getInput() == 3) {
+                fakeYaw2 = mc.thePlayer.rotationYaw - hardcodedYaw();
+                float yawDifference = getAngleDifference(lastEdge2, fakeYaw2);
+                float smoothingFactor = (1.0f - (65.0f / 100.0f));
+                fakeYaw2 = (lastEdge2 + yawDifference * smoothingFactor);
+                lastEdge2 = fakeYaw2;
 
-    private void onRenderTick(float partialTicks) {
-        if (!clickGuiOpen && this.mc.currentScreen instanceof ClickGui) {
-            clickGuiOpen = true;
-            initTimer(500.0F);
-            startTimer();
-            openedTime = System.currentTimeMillis();
-
-            if (firstTimeOpening) {
-                firstTimeOpening = false;
-                firstOpenTime = System.currentTimeMillis();
-                showingWelcome = true;
-            }
-        } else if (!(this.mc.currentScreen instanceof ClickGui)) {
-            clickGuiOpen = false;
-            openedTime = 0;
-        } else {
-            if (showingWelcome && (System.currentTimeMillis() - firstOpenTime) < 2600) {
-                long elapsedWelcome = System.currentTimeMillis() - firstOpenTime;
-                float alpha = 1.0f;
-
-                // fading away after 1.3 seconds, fading for 1.3 seconds
-                if (elapsedWelcome > 1300) {
-                    alpha = 1.0f - ((elapsedWelcome - 1300) / 1300.0f);
-                    alpha = Math.max(0.0f, alpha);
+                fakeYaw = fakeYaw2;
+                if (blockRotations != null) {
+                    fakePitch = blockRotations[1] + 5;
+                } else {
+                    fakePitch = 80f;
                 }
-
-                int centerX = this.width / 2;
-                int centerY = this.height / 2;
-
-                // intro effect
-                GlStateManager.pushMatrix();
-                GlStateManager.scale(4.0f, 4.0f, 1.0f);
-
-                // intro effect variables
-                String welcomePart1 = "welcome ";
-                String welcomePart2 = ", update 7";
-
-                int totalWidth = this.fontRendererObj.getStringWidth(welcomePart1 + userName + welcomePart2);
-                int startXTotal = (centerX / 4) - (totalWidth / 2);
-
-                // welcome
-                //int welcomeColor = (int)(alpha * 255) << 24 | (bluey & 0x00FFFFFF); // normal blue
-                //int welcomeColor = ((int)(alpha * 255) << 24) | 0x00FFFFFF; // full white
-                //int welcomeColor = ((int)(alpha * 255) << 24) | 0x00FFD700; // pale gold
-                int welcomeColor = ((int)(alpha * 255) << 24) | 0x00E0FFFF; // icy cyan -- VERY GOOD
-                //int welcomeColor = ((int)(alpha * 255) << 24) | 0x0098FF98; // mint green
-                //int welcomeColor = ((int)(alpha * 255) << 24) | 0xF65C5C; // red
-                this.fontRendererObj.drawString(welcomePart1, startXTotal, centerY / 4, welcomeColor, true);
-                if (!firstSent) {
-                    ScriptDefaults.client.print("&6[&eM&6] &7welcome &e" + userName + "&7, yay! &eupdate 7&7!");
-                    firstSent = true;
+            } else if (fakeRotation.getInput() == 4) {
+                fakeYaw += 25.71428571428571F;
+                fakePitch = 90F;
+            } else if (fakeRotation.getInput() == 5) {
+                if (blockRotations != null) {
+                    fakeYaw2 = blockRotations[0];
+                    fakePitch = blockRotations[1];
+                } else {
+                    fakeYaw2 = mc.thePlayer.rotationYaw - hardcodedYaw() - 180;
+                    fakePitch = 88F;
                 }
+                float yawDifference = getAngleDifference(lastEdge2, fakeYaw2);
+                float smoothingFactor = (1.0f - (65.0f / 100.0f));
+                fakeYaw2 = (lastEdge2 + yawDifference * smoothingFactor);
+                lastEdge2 = fakeYaw2;
 
-                // rainbow username
-                int startX = startXTotal + this.fontRendererObj.getStringWidth(welcomePart1);
-                for (int i = 0; i < userName.length(); i++) {
-                    char c = userName.charAt(i);
-                    int baseChroma = Utils.getChroma(15L, -i * 20L); // Changed from 100L to 20L
-                    int blueChroma = mixColors(baseChroma, bluey, 0.7f);
-                    int charColor = (int)(alpha * 255) << 24 | (blueChroma & 0x00FFFFFF);
-                    this.fontRendererObj.drawString(String.valueOf(c), startX, centerY / 4, charColor, true);
-                    startX += this.fontRendererObj.getCharWidth(c);
-                }
-
-                this.fontRendererObj.drawString(welcomePart2, startX, centerY / 4, welcomeColor, true);
-
-                GlStateManager.popMatrix();
-
-                return;
-            } else {
-                showingWelcome = false;
-                firstSent = false;
+                fakeYaw = fakeYaw2;
             }
-
-            int[] displaySize = {this.width, this.height};
-            int y = displaySize[1] + (8 - getValueInt(0, 30, 2));
-            int test = displaySize[1] + (8 - getValueInt(0, 40, 2));
-
-            this.fontRendererObj.drawString(clientName, 4, y, bluey, true);
-            this.fontRendererObj.drawString(welcomeText, 4, test, bluey, true);
-
-            // rainbow username
-            int startX = 48;
-            for (int i = 0; i < userName.length(); i++) {
-                char c = userName.charAt(i);
-                int charColor = Utils.getChroma(2L, -i * 100L);
-                this.fontRendererObj.drawString(String.valueOf(c), startX, test, charColor, true);
-                startX += this.fontRendererObj.getCharWidth(c);
-            }
-            this.fontRendererObj.drawString(userNumber, startX, test, bluey, true);
-
-            // rainbow mosqui username
-            /*int startX = 48;
-            for (int i = 0; i < mosquiv2userName.length(); i++) {
-                char c = mosquiv2userName.charAt(i);
-                int charColor = Utils.getChroma(2L, -i * 100L);
-                this.fontRendererObj.drawString(String.valueOf(c), startX, test, charColor, true);
-                startX += this.fontRendererObj.getCharWidth(c);
-            }
-            this.fontRendererObj.drawString(mosquiv2userNumber, startX, test, bluey, true);*/
-
-            long elapsedTime = System.currentTimeMillis() - openedTime;
-            int characterIndex = Math.min((int) (elapsedTime / 200L), developer.length());
-            y += this.fontRendererObj.FONT_HEIGHT + 1;
-
-            String devText = "dev. ";
-            if (characterIndex < developer.length()) {
-                String revealed = developer.substring(0, characterIndex);
-                String obfuscated = developer.substring(characterIndex);
-                devText += revealed + "&k" + obfuscated;
-            } else {
-                devText += developer;
-            }
-
-            this.fontRendererObj.drawString(devText, 4, y, bluey, true);
+            RotationUtils.setFakeRotations(fakeYaw, fakePitch);
         }
-    }
-
-    private int mixColors(int color1, int color2, float ratio) {
-        int r1 = (color1 >> 16) & 0xFF;
-        int g1 = (color1 >> 8) & 0xFF;
-        int b1 = color1 & 0xFF;
-
-        int r2 = (color2 >> 16) & 0xFF;
-        int g2 = (color2 >> 8) & 0xFF;
-        int b2 = color2 & 0xFF;
-
-        int r = (int)(r2 * ratio + r1 * (1 - ratio));
-        int g = (int)(g2 * ratio + g1 * (1 - ratio));
-        int b = (int)(b2 * ratio + b1 * (1 - ratio));
-
-        return (r << 16) | (g << 8) | b;
-    }
-
-    public void initTimer(float updates) {
-        this.updates = updates;
-    }
-
-    public void startTimer() {
-        this.cached = 0.0F;
-        this.last = System.currentTimeMillis();
-    }
-
-    public float getValueFloat(float begin, float end, int type) {
-        if (this.cached == end) {
-            return this.cached;
-        } else {
-            float t = (float) (System.currentTimeMillis() - this.last) / this.updates;
-            switch (type) {
-                case 1:
-                    t = t < 0.5F ? 4.0F * t * t * t : (t - 1.0F) * (2.0F * t - 2.0F) * (2.0F * t - 2.0F) + 1.0F;
-                    break;
-                case 2:
-                    t = (float) (1.0D - Math.pow((double) (1.0F - t), 5.0D));
-                    break;
-            }
-
-            float value = begin + t * (end - begin);
-            if ((end > begin && value > end) || (end < begin && value < end)) {
-                value = end;
-            }
-
-            if (value == end) {
-                this.cached = value;
-            }
-
-            return value;
+        if (!isEnabled) {
+            dt++;
+            return;
         }
-    }
-
-    public int getValueInt(int begin, int end, int type) {
-        return Math.round(this.getValueFloat((float) begin, (float) end, type));
-    }
-
-    public void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
-        if (mouseButton == 0) {
-            boolean draggingAssigned = false;
-            for (int i = categories.size() - 1; i >= 0; i--) {
-                CategoryComponent category = categories.get(i);
-                if (!draggingAssigned && category.draggable(mouseX, mouseY)) {
-                    category.overTitle(true);
-                    category.xx = mouseX - category.getX();
-                    category.yy = mouseY - category.getY();
-                    category.dragging = true;
-                    draggingAssigned = true;
-                }
-                else {
-                    category.overTitle(false);
-                }
-            }
-        }
-
-        if (mouseButton == 1) {
-            boolean toggled = false;
-            for (int i = categories.size() - 1; i >= 0; i--) {
-                CategoryComponent category = categories.get(i);
-                if (!toggled && category.overTitle(mouseX, mouseY)) {
-                    category.mouseClicked(!category.isOpened());
-                    toggled = true;
-                }
-            }
-        }
-
-        for (CategoryComponent category : categories) {
-            if (category.isOpened() && !category.getModules().isEmpty() && category.overRect(mouseX, mouseY)) {
-                for (ModuleComponent component : category.getModules()) {
-                    if (component.onClick(mouseX, mouseY, mouseButton)) {
-                        category.openModule(component);
-                    }
-                }
-            }
-        }
-
-        if (CommandLine.opened) {
-            this.commandLineInput.mouseClicked(mouseX, mouseY, mouseButton);
-            super.mouseClicked(mouseX, mouseY, mouseButton);
-        }
-    }
-
-
-    public void mouseReleased(int x, int y, int button) {
-        if (button == 0) {
-            Iterator<CategoryComponent> iterator = categories.iterator();
-            while (iterator.hasNext()) {
-                CategoryComponent category = iterator.next();
-                category.overTitle(false);
-                if (category.isOpened() && !category.getModules().isEmpty()) {
-                    for (Component module : category.getModules()) {
-                        module.mouseReleased(x, y, button);
-                    }
-                }
-            }
-        }
-    }
-
-    @Override
-    public void handleMouseInput() throws IOException {
-        super.handleMouseInput();
-        int wheelInput = Mouse.getDWheel();
-        if (wheelInput != 0) {
-            for (CategoryComponent category : categories) {
-                category.onScroll(wheelInput);
-            }
-        }
-    }
-
-    @Override
-    public void setWorldAndResolution(Minecraft p_setWorldAndResolution_1_, final int p_setWorldAndResolution_2_, final int p_setWorldAndResolution_3_) {
-        this.mc = p_setWorldAndResolution_1_;
-        originalScale = this.mc.gameSettings.guiScale;
-        this.mc.gameSettings.guiScale = (int) Gui.guiScale.getInput() + 1;
-        this.itemRender = p_setWorldAndResolution_1_.getRenderItem();
-        this.fontRendererObj = p_setWorldAndResolution_1_.fontRendererObj;
-        final ScaledResolution scaledresolution = new ScaledResolution(this.mc);
-        this.width = scaledresolution.getScaledWidth();
-        this.height = scaledresolution.getScaledHeight();
-        if (!MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.InitGuiEvent.Pre(this, this.buttonList))) {
-            this.buttonList.clear();
-            this.initGui();
-        }
-        MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.InitGuiEvent.Post(this, this.buttonList));
-    }
-
-    @Override
-    public void keyTyped(char t, int k) {
-        if (k == Keyboard.KEY_ESCAPE && !binding()) {
-            this.mc.displayGuiScreen(null);
+        if (Utils.isMoving()) {
+            scaffoldTicks++;
         }
         else {
-            Iterator<CategoryComponent> iterator = categories.iterator();
-            while (iterator.hasNext()) {
-                CategoryComponent category = iterator.next();
+            scaffoldTicks = 0;
+        }
+        canBlockFade = true;
 
-                if (category.isOpened() && !category.getModules().isEmpty()) {
-                    for (Component module : category.getModules()) {
-                        module.keyTyped(t, k);
+        if (Utils.keysDown() && usingFastScaffold() && !ModuleManager.invmove.active() && fastScaffold.getInput() >= 1 && !ModuleManager.tower.canTower() && !LongJump.function) {
+            if (mc.thePlayer.onGround && Utils.isMoving()) {
+                if (scaffoldTicks > 1) {
+                    jump = true;
+                    rotateForward();
+
+                    if (fastScaffold.getInput() == 7) {
+                        if (predictionMode.getInput() == 2) {
+                            ModuleManager.sprint.enable();
+                            if (mc.thePlayer.onGround) {
+                                mc.thePlayer.setSprinting(true);
+                            } else if (predictionMode.getInput() == 1) {
+                                mc.thePlayer.setSprinting(false);
+                            }
+                        }
+                     } else {
+                        Utils.setSpeed((getSpeed(getSpeedLevel()) - Utils.randomizeDouble(0.0003, 0.0001) * ModuleUtils.applyFrictionMulti()));
+                    }
+
+                    if (startYPos == -1 || Math.abs(startYPos - e.posY) > 2) {
+                        startYPos = e.posY;
+                        fastScaffoldKeepY = true;
                     }
                 }
             }
-            if (CommandLine.opened) {
-                String cm = this.commandLineInput.getText();
-                if (k == 28 && !cm.isEmpty()) {
-                    Commands.rCMD(this.commandLineInput.getText());
-                    this.commandLineInput.setText("");
+        }
+        else if (fastScaffoldKeepY) {
+            fastScaffoldKeepY = firstKeepYPlace = false;
+            startYPos = -1;
+            keepYTicks = 0;
+        }
+
+        //Float
+        if (sprint.getInput() == 2 && !usingFastScaffold() && !fastScaffoldKeepY && !ModuleManager.tower.canTower() && !LongJump.function) {
+            floatWasEnabled = true;
+            if (!floatStarted && offsetDelay == 0) {
+                if (ModuleUtils.groundTicks > 8 && mc.thePlayer.onGround) {
+                    floatKeepY = true;
+                    startYPos = e.posY;
+                    mc.thePlayer.jump();
+                    if (Utils.isMoving()) {
+                        double fvl = (getSpeed(getSpeedLevel()) - Utils.randomizeDouble(0.0001, 0.0001)) * (floatFirstJump.getInput() / 100);
+                        Utils.setSpeed(fvl);
+                    }
+                    floatJumped = true;
+                } else if (ModuleUtils.groundTicks <= 8 && mc.thePlayer.onGround) {
+                    floatStarted = true;
+                }
+                if (floatJumped && !mc.thePlayer.onGround) {
+                    floatStarted = true;
+                }
+            }
+
+            if (floatStarted && mc.thePlayer.onGround) {
+                floatKeepY = false;
+                startYPos = -1;
+                if (moduleEnabled && mc.thePlayer.posY % 1 == 0) {
+                    ++floatTicks;
+                    if (floatTicks > 1) {
+                        e.setPosY(e.getPosY() + ModuleUtils.offsetValue);
+                        floatTicks = 0;
+                    }
+                    else {
+                        e.setPosY(e.getPosY() + 1e-6);
+                    }
+                    if (sprint.getInput() == 2 && Utils.isMoving() && !ModuleManager.invmove.active()) Utils.setSpeed(getFloatSpeed(getSpeedLevel()));
+                    ModuleUtils.groundTicks = 0;
+                    offsetDelay = 2;
+                    ModuleManager.tower.delay = true;
+                    ModuleManager.tower.delayTicks = 0;
+                }
+            }
+        } else if (floatWasEnabled && moduleEnabled) {
+            if (floatKeepY) {
+                startYPos = -1;
+            }
+            floatStarted = floatJumped = floatKeepY = floatWasEnabled = false;
+            floatTicks = 0;
+        }
+
+        if (blockRotations != null) {
+            if (mc.thePlayer.rotationYaw == lastOffset) {
+                sameMouse++;
+            }
+            else {
+                sameMouse = 0;
+                yawChanges++;
+            }
+            if (sameMouse > 2) {
+                yawChanges = 0;
+            }
+            lastOffset = mc.thePlayer.rotationYaw;
+            if (yawChanges > 15) {
+                randomF = 1;
+                yawEdge = Utils.time();
+            }
+            if (yawEdge > 0 && (Utils.time() - yawEdge) > 500) {
+                yawEdge = 0;
+            }
+        }
+        else {
+            fakeYaw1 = mc.thePlayer.rotationYaw - hardcodedYaw();
+        }
+
+        dynamic = 0;
+        if (targetBlock != null) {
+            Vec3 lookAt = new Vec3(targetBlock.xCoord - lookVec.xCoord, targetBlock.yCoord - lookVec.yCoord, targetBlock.zCoord - lookVec.zCoord);
+            blockRotations = RotationUtils.getRotations(lookAt);
+            targetBlock = null;
+            fakeYaw1 = mc.thePlayer.rotationYaw - hardcodedYaw();
+            if (yawEdge == 0) {
+                randomF = Utils.randomizeInt(0, 9);
+                yawEdge = Utils.time();
+            }
+            dynamic++;
+        }
+        randomF = 0;
+    }
+
+    @SubscribeEvent
+    public void onClientRotation(ClientRotationEvent e) {
+        if (!Utils.nullCheck()) {
+            return;
+        }
+        if (!isEnabled) {
+            return;
+        }
+
+        if (jump) {
+            mc.thePlayer.setSprinting(true);
+            mc.thePlayer.jump();
+            jump = false;
+            if (rotation.getInput() == 2) {
+                Utils.setSpeed((getSpeed(getSpeedLevel()) - Utils.randomizeDouble(0.0001, 0.0001) * ModuleUtils.applyFrictionMulti()));
+            }
+            if (fastScaffold.getInput() == 6 || fastScaffold.getInput() == 3 && firstKeepYPlace) {
+                lowhop = true;
+            }
+        }
+
+        switch ((int) rotation.getInput()) {
+            case 1:
+                yaw = mc.thePlayer.rotationYaw - hardcodedYaw();
+                pitch = 78F;
+                e.setRotations(yaw, pitch);
+                break;
+            case 2:
+                offsetRots(e);
+                break;
+            case 3:
+                preciseRots(e);
+                break;
+            case 4:
+                predictionRotationsA(e);
+                break;
+            case 5:
+                offsetRots3(e);
+                break;
+        }
+        if (edge != 1) {
+            firstStroke = Utils.time();
+            switchvl++;
+            edge = 1;
+        }
+        if (mc.thePlayer.onGround) {
+            enabledOffGround = false;
+        }
+
+        //jump facing forward
+        if (ModuleUtils.inAirTicks >= 5) {
+            rotateForward = false;
+        }
+        if (rotationDelay > 0) --rotationDelay;
+
+        if (rotateForward && jumpFacingForward.isToggled()) {
+            if (rotation.getInput() > 0) {
+                if (!rotatingForward) {
+                    rotationDelay = 3;
+                    rotatingForward = true;
+                }
+
+                float forwardYaw = (mc.thePlayer.rotationYaw - hardcodedYaw() - 180);
+                e.setYaw(forwardYaw);
+                //e.setPitch(10F);
+                e.setPitch(77F);
+
+                if (rotationDelay > 2) {
                     return;
                 }
-                this.commandLineInput.textboxKeyTyped(t, k);
+            }
+        } else {
+            rotatingForward = false;
+        }
+
+        if (rotationDelay > 1) {
+            return;
+        }
+
+        if (!Settings.movementFix.isToggled() && mc.thePlayer.motionX == 0.0D && mc.thePlayer.motionZ == 0.0D) {
+            if (blockRotations != null) {
+                e.setYaw(blockRotations[0]);
+            }
+        }
+
+        if (ModuleManager.tower.isVerticalTowering()) {
+            if (blockRotations != null && (!getVTR || ModuleManager.tower.ebDelay <= 1 || !ModuleManager.tower.firstVTP)) {
+                VTRY = blockRotations[0];
+                getVTR = true;
+            }
+            if (getVTR) {
+                e.setYaw(VTRY);
+            }
+            if (ModuleManager.tower.yaw != 0) {
+                e.setYaw(ModuleManager.tower.yaw);
+            }
+            if (ModuleManager.tower.pitch != 0) {
+                e.setPitch(ModuleManager.tower.pitch);
+            }
+        }
+        else {
+            getVTR = false;
+        }
+
+        //pitch fix
+        if (e.getPitch() > 89.9F) {
+            e.setPitch(89.9F);
+        }
+    }
+
+    private void predictionRotationsA(ClientRotationEvent e) {
+        yaw = mc.thePlayer.rotationYaw - hardcodedYaw();
+        pitch = 80F;
+        e.setRotations(yaw, pitch);
+        theYaw = e.getYaw();
+    }
+
+    /*private void predictionRotationsB(ClientRotationEvent e) {
+        yaw = mc.thePlayer.rotationYaw - hardcodedYaw();
+        pitch = 80F;
+        e.setRotations(yaw, pitch);
+        theYaw = e.getYaw();
+        mc.thePlayer.renderYawOffset = yaw;
+        mc.thePlayer.rotationYawHead = yaw;
+    }*/
+
+    private float lastMY;
+
+    private void handleV() {
+        float yawBackwards2 = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw) - hardcodedYaw();
+        double dif = (lastMY - getMotionYaw());
+        double v = 2.5;
+        float offset = (yawWithOffset - yawBackwards2);
+        if (offset > yawAngle || offset < -yawAngle) {
+            lastYawS = getSmooth = smoothedYaw = yaw;
+            return;
+        }
+        if (dif >= 0 && dif < v || dif <= -0 && dif > -v || mc.thePlayer.onGround) {
+            lastYawS = getSmooth = smoothedYaw = yaw;
+            return;
+        }
+
+        getSmooth = yaw;
+        float yawDifference = getAngleDifference(lastYawS, getSmooth);
+        float smoothingFactor = 0.1f;
+        getSmooth = (lastYawS + yawDifference * smoothingFactor);
+        lastYawS = getSmooth;
+        smoothedYaw = getSmooth;
+        yaw = smoothedYaw;
+    }
+
+    private void handleSmoothing() {
+        handleV();
+        lastMY = getMotionYaw();
+    }
+
+    private void offsetRots(ClientRotationEvent e) {
+        float moveAngle = (float) getMovementAngle();
+        float relativeYaw = mc.thePlayer.rotationYaw + moveAngle;
+        float normalizedYaw = (relativeYaw % 360 + 360) % 360;
+        float quad = normalizedYaw % 90;
+
+        float side = MathHelper.wrapAngleTo180_float(getMotionYaw() - yaw);
+        float yawBackwards = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw) - hardcodedYaw();
+        float blockYawOffset = MathHelper.wrapAngleTo180_float(yawBackwards - blockYaw);
+
+        long strokeDelay = 250;
+
+        float first = 77.5F;
+        float sec = 77.5F;
+
+        if (quad <= 5 || quad >= 85) {
+            yawAngle = 123.425F;
+            minOffset = 11;
+            minPitch = first;
+        }
+        if (quad > 5 && quad <= 15 || quad >= 75 && quad < 85) {
+            yawAngle = 125.825F;
+            minOffset = 9;
+            minPitch = first;
+        }
+        if (quad > 15 && quad <= 25 || quad >= 65 && quad < 75) {
+            yawAngle = 128.625F;
+            minOffset = 8;
+            minPitch = first;
+        }
+        if (quad > 25 && quad <= 32 || quad >= 58 && quad < 65) {
+            yawAngle = 131.625F;
+            minOffset = 7;
+            minPitch = sec;
+        }
+        if (quad > 32 && quad <= 38 || quad >= 52 && quad < 58) {
+            yawAngle = 133.825F;
+            minOffset = 6;
+            minPitch = sec;
+        }
+        if (quad > 38 && quad <= 42 || quad >= 48 && quad < 52) {
+            yawAngle = 135.825F;
+            minOffset = 4;
+            minPitch = sec;
+        }
+        if (quad > 42 && quad <= 45 || quad >= 45 && quad < 48) {
+            yawAngle = 138.125F;
+            minOffset = 3;
+            minPitch = sec;
+        }
+        //Utils.print("" + minOffset);
+        //float offsetAmountD = ((((float) offsetAmount.getInput() / 10) - 10) * -2) - (((float) offsetAmount.getInput() / 10) - 10);
+        //yawAngle += offsetAmountD;
+        //Utils.print("" + offsetAmountD);
+
+        float offset = yawAngle;//(!Utils.scaffoldDiagonal(false)) ? 125.500F : 143.500F;
+
+
+        float nigger = 0;
+
+        if (quad > 45) {
+            nigger = 10;
+        }
+        else {
+            nigger = -10;
+        }
+        if (switchvl > 0) {
+                    /*if (vlS > 0 && (System.currentTimeMillis() - vlS) > strokeDelay && firstStroke == 0) {
+                        switchvl = 0;
+                        vlS = 0;
+                    }*/
+            //if (switchvl > 0) {
+            firstStroke = Utils.time();
+            switchvl = 0;
+            vlS = 0;
+            resetm = true;
+            //}
+        }
+        else {
+            vlS = Utils.time();
+        }
+        if (firstStroke > 0 && (Utils.time() - firstStroke) > strokeDelay) {
+            firstStroke = 0;
+        }
+        if (Utils.fallDist() <= 2 && Utils.getHorizontalSpeed() > 0.1) {
+            enabledOffGround = false;
+        }
+        if (enabledOffGround) {
+            if (blockRotations != null) {
+                yaw = blockRotations[0];
+                pitch = blockRotations[1];
+            } else {
+                yaw = mc.thePlayer.rotationYaw - hardcodedYaw() - nigger;
+                pitch = minPitch;
+            }
+            e.setRotations(yaw, pitch);
+            return;
+        }
+
+        if (blockRotations != null) {
+            blockYaw = blockRotations[0];
+            pitch = blockRotations[1];
+            yawOffset = blockYawOffset;
+            if (pitch < minPitch) {
+                pitch = minPitch;
+            }
+        } else {
+            pitch = minPitch;
+            if (edge == 1 && ((quad <= 3 || quad >= 87) && !Utils.scaffoldDiagonal(false))) {
+                firstStroke = Utils.time();
+            }
+            yawOffset = 5;
+            dynamic = 2;
+        }
+
+        if (!Utils.isMoving() || Utils.getHorizontalSpeed() == 0.0D) {
+            e.setRotations(theYaw, pitch);
+            return;
+        }
+
+        float motionYaw = getMotionYaw();
+
+        float newYaw = motionYaw - offset * Math.signum(
+                MathHelper.wrapAngleTo180_float(motionYaw - yaw)
+        );
+        yaw = MathHelper.wrapAngleTo180_float(newYaw);
+
+        if (quad > 3 && quad < 87 && dynamic > 0) {
+            if (quad < 45F) {
+                if (firstStroke == 0) {
+                    if (side >= 0) {
+                        set2 = false;
+                    } else {
+                        set2 = true;
+                    }
+                }
+                if (was452) {
+                    switchvl++;
+                }
+                was451 = true;
+                was452 = false;
+            } else {
+                if (firstStroke == 0) {
+                    if (side >= 0) {
+                        set2 = true;
+                    } else {
+                        set2 = false;
+                    }
+                }
+                if (was451) {
+                    switchvl++;
+                }
+                was452 = true;
+                was451 = false;
+            }
+        }
+        double minSwitch = (!Utils.scaffoldDiagonal(false)) ? 9 : 15;
+        if (side >= 0) {
+            if (yawOffset <= -minSwitch && firstStroke == 0 && dynamic > 0) {
+                if (quad <= 3 || quad >= 87) {
+                    if (set2) {
+                        switchvl++;
+                    }
+                    set2 = false;
+                }
+            } else if (yawOffset >= 0 && firstStroke == 0 && dynamic > 0) {
+                if (quad <= 3 || quad >= 87) {
+                    if (yawOffset >= minSwitch) {
+                        if (!set2) {
+                            switchvl++;
+                        }
+                        set2 = true;
+                    }
+                }
+            }
+            if (set2) {
+                if (yawOffset <= -0) yawOffset = -0;
+                if (yawOffset >= minOffset) yawOffset = minOffset;
+                theYaw = (yaw + offset * 2) - yawOffset;
+                e.setRotations(theYaw, pitch);
+                return;
+            }
+        } else if (side <= -0) {
+            if (yawOffset >= minSwitch && firstStroke == 0 && dynamic > 0) {
+                if (quad <= 3 || quad >= 87) {
+                    if (set2) {
+                        switchvl++;
+                    }
+                    set2 = false;
+                }
+            } else if (yawOffset <= 0 && firstStroke == 0 && dynamic > 0) {
+                if (quad <= 3 || quad >= 87) {
+                    if (yawOffset <= -minSwitch) {
+                        if (!set2) {
+                            switchvl++;
+                        }
+                        set2 = true;
+                    }
+                }
+            }
+            if (set2) {
+                if (yawOffset >= 0) yawOffset = 0;
+                if (yawOffset <= -minOffset) yawOffset = -minOffset;
+                theYaw = (yaw - offset * 2) - yawOffset;
+                e.setRotations(theYaw, pitch);
+                return;
+            }
+        }
+
+        if (side >= 0) {
+            if (yawOffset >= 0) yawOffset = 0;
+            if (yawOffset <= -minOffset) yawOffset = -minOffset;
+        } else if (side <= -0) {
+            if (yawOffset <= -0) yawOffset = -0;
+            if (yawOffset >= minOffset) yawOffset = minOffset;
+        }
+        theYaw = yaw - yawOffset;
+        e.setRotations(theYaw, pitch);
+    }
+
+    private void offsetRots2(ClientRotationEvent e) {
+        float moveAngle2 = (float) getMovementAngle();
+        float relativeYaw2 = mc.thePlayer.rotationYaw + moveAngle2;
+        float normalizedYaw2 = (relativeYaw2 % 360 + 360) % 360;
+        float quad2 = normalizedYaw2 % 90;
+
+        float yawBackwards2 = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw) - hardcodedYaw();
+        float blockYawOffset2 = MathHelper.wrapAngleTo180_float(yawBackwards2 - blockYaw);
+
+        long sDelay = 250;
+
+        if (switchvl > 0) {
+            /*if (vlS > 0 && (System.currentTimeMillis() - vlS) > strokeDelay && firstStroke == 0) {
+                switchvl = 0;
+                vlS = 0;
+            }*/
+            //if (switchvl > 0) {
+            firstStroke = Utils.time();
+            switchvl = 0;
+            vlS = 0;
+            resetm = true;
+            //}
+        }
+        else {
+            vlS = Utils.time();
+        }
+        if (firstStroke > 0 && (System.currentTimeMillis() - firstStroke) > sDelay) {
+            firstStroke = 0;
+        }
+
+        float firstv = 77.5F;
+        float secv = 77.5F;
+
+        if (quad2 <= 5 || quad2 >= 85) {
+            yawAngle = 58.685F;
+            minOffset = 13;
+            minPitch = firstv;
+        }
+        if (quad2 > 5 && quad2 <= 15 || quad2 >= 75 && quad2 < 85) {
+            yawAngle = 56.185F;
+            minOffset = 11;
+            minPitch = firstv;
+        }
+        if (quad2 > 15 && quad2 <= 25 || quad2 >= 65 && quad2 < 75) {
+            yawAngle = 53.385F;
+            minOffset = 9;
+            minPitch = firstv;
+        }
+        if (quad2 > 25 && quad2 <= 32 || quad2 >= 58 && quad2 < 65) {
+            yawAngle = 50.385F;
+            minOffset = 7;
+            minPitch = secv;
+        }
+        if (quad2 > 32 && quad2 <= 38 || quad2 >= 52 && quad2 < 58) {
+            yawAngle = 48.185F;
+            minOffset = 6;
+            minPitch = secv;
+        }
+        if (quad2 > 38 && quad2 <= 42 || quad2 >= 48 && quad2 < 52) {
+            yawAngle = 46.185F;
+            minOffset = 4;
+            minPitch = secv;
+        }
+        if (quad2 > 42 && quad2 <= 45 || quad2 >= 45 && quad2 < 48) {
+            yawAngle = 42.885F;
+            minOffset = 3;
+            minPitch = secv;
+        }
+
+        if (blockRotations != null) {
+            blockYaw = blockRotations[0];
+            pitch = blockRotations[1];
+            yawOffset = blockYawOffset2;
+            if (pitch < minPitch) {
+                pitch = minPitch;
+            }
+        } else {
+            pitch = minPitch;
+            if (edge == 1 && ((quad2 <= 3 || quad2 >= 87) && !Utils.scaffoldDiagonal(false))) {
+                switchvl++;
+            }
+            yawOffset = 5;
+            dynamic = 2;
+        }
+
+        if (quad2 > 3 && quad2 < 87 && dynamic > 0) {
+            if (quad2 < 45F) {
+                if (firstStroke == 0) {
+                    set2 = true;
+                }
+                if (was452) {
+                    switchvl++;
+                }
+                was451 = true;
+                was452 = false;
+            } else {
+                if (firstStroke == 0) {
+                    set2 = false;
+                }
+                if (was451) {
+                    switchvl++;
+                }
+                was452 = true;
+                was451 = false;
+            }
+        }
+        double minSwitch2 = (!Utils.scaffoldDiagonal(false)) ? 9 : 15;
+
+        if (yawOffset <= -minSwitch2 && firstStroke == 0 && dynamic > 0) {
+            if (quad2 <= 3 || quad2 >= 87) {
+                if (set2) {
+                    switchvl++;
+                }
+                set2 = true;
+            }
+        } else if (yawOffset >= 0 && firstStroke == 0 && dynamic > 0) {
+            if (quad2 <= 3 || quad2 >= 87) {
+                if (yawOffset >= minSwitch2) {
+                    if (!set2) {
+                        switchvl++;
+                    }
+                    set2 = false;
+                }
+            }
+        }
+
+        if (set2) {
+            yaw = ((yawBackwards2));
+            if (yawOffset <= -0) yawOffset = 0;
+            if (yawOffset >= minOffset) yawOffset = minOffset;
+            yawWithOffset = yaw + yawAngle - yawOffset;
+            neg = false;
+            handleSmoothing();
+            e.setRotations(yaw + yawAngle - yawOffset, pitch);
+            return;
+        }
+
+        yaw = ((yawBackwards2));
+        if (yawOffset >= 0) yawOffset = 0;
+        if (yawOffset <= -minOffset) yawOffset = -minOffset;
+        yawWithOffset = yaw - yawAngle - yawOffset;
+        neg = true;
+        handleSmoothing();
+        e.setRotations(yaw - yawAngle - yawOffset, pitch);
+    }
+
+    private void preciseRots(ClientRotationEvent e) {
+        if (blockRotations != null) {
+            yaw = blockRotations[0];
+            pitch = blockRotations[1];
+        }
+        else {
+            yaw = mc.thePlayer.rotationYaw - hardcodedYaw();
+            pitch = 80F;
+        }
+        e.setRotations(yaw, pitch);
+        theYaw = yaw;
+    }
+
+    private void offsetRots3(ClientRotationEvent e) {
+        float moveAngle = (float) getMovementAngle();
+        float relativeYaw = mc.thePlayer.rotationYaw + moveAngle;
+        float normalizedYaw = (relativeYaw % 360 + 360) % 360;
+        float quad = normalizedYaw % 90;
+
+        float side = MathHelper.wrapAngleTo180_float(getMotionYaw() - yaw);
+        float yawBackwards = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw) - hardcodedYaw();
+        float blockYawOffset = MathHelper.wrapAngleTo180_float(yawBackwards - blockYaw);
+
+        long strokeDelay = 250;
+
+        float first = 60F + (float)(Math.sin(System.currentTimeMillis() * 0.001) * 2); // changes between 58-62
+        float sec = 60F + (float)(Math.cos(System.currentTimeMillis() * 0.0015) * 1.5); // changes between 58.5-61.5
+
+        if (quad <= 5 || quad >= 85) {
+            yawAngle = 123.425F + (float)(Math.sin(System.currentTimeMillis() * 0.002) * 1.5);
+            minOffset = 11;
+            minPitch = first;
+        }
+        if (quad > 5 && quad <= 15 || quad >= 75 && quad < 85) {
+            yawAngle = 125.825F + (float)(Math.cos(System.currentTimeMillis() * 0.0018) * 1.2);
+            minOffset = 9;
+            minPitch = first;
+        }
+        if (quad > 15 && quad <= 25 || quad >= 65 && quad < 75) {
+            yawAngle = 128.625F + (float)(Math.sin(System.currentTimeMillis() * 0.0022) * 1.0);
+            minOffset = 8;
+            minPitch = first;
+        }
+        if (quad > 25 && quad <= 32 || quad >= 58 && quad < 65) {
+            yawAngle = 131.625F + (float)(Math.cos(System.currentTimeMillis() * 0.0025) * 0.8);
+            minOffset = 7;
+            minPitch = sec;
+        }
+        if (quad > 32 && quad <= 38 || quad >= 52 && quad < 58) {
+            yawAngle = 133.825F + (float)(Math.sin(System.currentTimeMillis() * 0.003) * 0.6);
+            minOffset = 6;
+            minPitch = sec;
+        }
+        if (quad > 38 && quad <= 42 || quad >= 48 && quad < 52) {
+            yawAngle = 135.825F + (float)(Math.cos(System.currentTimeMillis() * 0.0028) * 0.5);
+            minOffset = 4;
+            minPitch = sec;
+        }
+        if (quad > 42 && quad <= 45 || quad >= 45 && quad < 48) {
+            yawAngle = 138.125F + (float)(Math.sin(System.currentTimeMillis() * 0.0032) * 0.4);
+            minOffset = 3;
+            minPitch = sec;
+        }
+
+        float offset = yawAngle;
+
+        rotationUpdateTicks++;
+        if (rotationUpdateTicks >= 5 + rotationRandom.nextInt(8)) { // update every 5-12 ticks randomly
+            targetDynamicYaw = (rotationRandom.nextFloat() - 0.5f) * 8;
+            targetDynamicPitch = (rotationRandom.nextFloat() - 0.5f) * 6;
+            rotationUpdateTicks = 0;
+        }
+
+        float smoothFactor = 0.15f;
+        dynamicYawOffset += (targetDynamicYaw - dynamicYawOffset) * smoothFactor;
+        dynamicPitchOffset += (targetDynamicPitch - dynamicPitchOffset) * smoothFactor;
+
+        if (Utils.isMoving()) {
+            dynamicYawOffset += (float)(Math.sin(System.currentTimeMillis() * 0.005) * 0.5);
+            dynamicPitchOffset += (float)(Math.cos(System.currentTimeMillis() * 0.007) * 0.3);
+        }
+
+        float nigger = 0;
+        if (quad > 45) {
+            nigger = 10 + dynamicYawOffset * 0.3f;
+        } else {
+            nigger = -10 + dynamicYawOffset * 0.3f;
+        }
+
+        if (switchvl > 0) {
+            firstStroke = Utils.time();
+            switchvl = 0;
+            vlS = 0;
+            resetm = true;
+        } else {
+            vlS = Utils.time();
+        }
+
+        if (firstStroke > 0 && (Utils.time() - firstStroke) > strokeDelay) {
+            firstStroke = 0;
+        }
+
+        if (Utils.fallDist() <= 2 && Utils.getHorizontalSpeed() > 0.1) {
+            enabledOffGround = false;
+        }
+
+        if (enabledOffGround) {
+            if (blockRotations != null) {
+                yaw = blockRotations[0] + dynamicYawOffset;
+                pitch = blockRotations[1] + dynamicPitchOffset;
+            } else {
+                yaw = mc.thePlayer.rotationYaw - hardcodedYaw() - nigger;
+                pitch = minPitch + dynamicPitchOffset;
+            }
+            e.setRotations(yaw, pitch);
+            return;
+        }
+
+        if (blockRotations != null) {
+            blockYaw = blockRotations[0];
+            pitch = blockRotations[1] + dynamicPitchOffset;
+            yawOffset = blockYawOffset;
+            if (pitch < minPitch) {
+                pitch = minPitch + dynamicPitchOffset;
+            }
+        } else {
+            pitch = minPitch + dynamicPitchOffset;
+            if (edge == 1 && ((quad <= 3 || quad >= 87) && !Utils.scaffoldDiagonal(false))) {
+                firstStroke = Utils.time();
+            }
+            yawOffset = 5;
+            dynamic = 2;
+        }
+
+        if (!Utils.isMoving() || Utils.getHorizontalSpeed() == 0.0D) {
+            e.setRotations(theYaw + dynamicYawOffset, pitch);
+            return;
+        }
+
+        float motionYaw = getMotionYaw();
+        float newYaw = motionYaw - offset * Math.signum(
+                MathHelper.wrapAngleTo180_float(motionYaw - yaw)
+        );
+        yaw = MathHelper.wrapAngleTo180_float(newYaw) + dynamicYawOffset;
+
+        if (quad > 3 && quad < 87 && dynamic > 0) {
+            if (quad < 45F) {
+                if (firstStroke == 0) {
+                    if (side >= 0) {
+                        set2 = false;
+                    } else {
+                        set2 = true;
+                    }
+                }
+                if (was452) {
+                    switchvl++;
+                }
+                was451 = true;
+                was452 = false;
+            } else {
+                if (firstStroke == 0) {
+                    if (side >= 0) {
+                        set2 = true;
+                    } else {
+                        set2 = false;
+                    }
+                }
+                if (was451) {
+                    switchvl++;
+                }
+                was452 = true;
+                was451 = false;
+            }
+        }
+
+        double minSwitch = (!Utils.scaffoldDiagonal(false)) ? 9 : 15;
+        if (side >= 0) {
+            if (yawOffset <= -minSwitch && firstStroke == 0 && dynamic > 0) {
+                if (quad <= 3 || quad >= 87) {
+                    if (set2) {
+                        switchvl++;
+                    }
+                    set2 = false;
+                }
+            } else if (yawOffset >= 0 && firstStroke == 0 && dynamic > 0) {
+                if (quad <= 3 || quad >= 87) {
+                    if (yawOffset >= minSwitch) {
+                        if (!set2) {
+                            switchvl++;
+                        }
+                        set2 = true;
+                    }
+                }
+            }
+            if (set2) {
+                if (yawOffset <= -0) yawOffset = -0;
+                if (yawOffset >= minOffset) yawOffset = minOffset;
+                theYaw = (yaw + offset * 2) - yawOffset + dynamicYawOffset;
+                e.setRotations(theYaw, pitch);
+                return;
+            }
+        } else if (side <= -0) {
+            if (yawOffset >= minSwitch && firstStroke == 0 && dynamic > 0) {
+                if (quad <= 3 || quad >= 87) {
+                    if (set2) {
+                        switchvl++;
+                    }
+                    set2 = false;
+                }
+            } else if (yawOffset <= 0 && firstStroke == 0 && dynamic > 0) {
+                if (quad <= 3 || quad >= 87) {
+                    if (yawOffset <= -minSwitch) {
+                        if (!set2) {
+                            switchvl++;
+                        }
+                        set2 = true;
+                    }
+                }
+            }
+            if (set2) {
+                if (yawOffset >= 0) yawOffset = 0;
+                if (yawOffset <= -minOffset) yawOffset = -minOffset;
+                theYaw = (yaw - offset * 2) - yawOffset + dynamicYawOffset;
+                e.setRotations(theYaw, pitch);
+                return;
+            }
+        }
+
+        if (side >= 0) {
+            if (yawOffset >= 0) yawOffset = 0;
+            if (yawOffset <= -minOffset) yawOffset = -minOffset;
+        } else if (side <= -0) {
+            if (yawOffset <= -0) yawOffset = -0;
+            if (yawOffset >= minOffset) yawOffset = minOffset;
+        }
+
+        theYaw = yaw - yawOffset + dynamicYawOffset;
+        e.setRotations(theYaw, pitch);
+    }
+
+    @SubscribeEvent
+    public void onPostPlayerInput(PostPlayerInputEvent e) {
+        if (!ModuleManager.scaffold.isEnabled) {
+            return;
+        }
+        if (!fastScaffoldKeepY && !floatKeepY) {
+            return;
+        }
+        mc.thePlayer.movementInput.jump = false;
+    }
+
+    @SubscribeEvent
+    public void onSlotUpdate(SlotUpdateEvent e) {
+        if (isEnabled && autoSwap.isToggled()) {
+            lastSlot.set(e.slot);
+            e.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
+    public void onPreUpdate(PreUpdateEvent e) {
+        if (!Utils.nullCheck()) {
+            return;
+        }
+        stopUpdate = stopUpdate2 = false;
+        if (!isEnabled) {
+            stopUpdate2 = true;
+        }
+        if (LongJump.function) {
+            startYPos = -1;
+        }
+        if (LongJump.stopModules) {
+            stopUpdate2 = true;
+        }
+        if (!stopUpdate2) {
+            if (holdingBlocks() && setSlot()) {
+                /*if (moduleEnabled && !finishProcedure) {
+                    if (Utils.distanceToGround(mc.thePlayer) < 2) {
+                        finishProcedure = true;
+                    }
+                    if (Utils.distanceToGround(mc.thePlayer) > 6) {
+                        if (hasPlaced) {
+                            finishProcedure = true;
+                        }
+                    } else if (!finishProcedure) {
+                        stopUpdate = true;
+                    }
+                }*/
+                if (!stopUpdate) {
+                    hasSwapped = true;
+                    int mode = (int) fastScaffold.getInput();
+                    if (!ModuleManager.tower.placeExtraBlock) {
+                        if (rotation.getInput() == 0 || rotationDelay == 0) {
+                            placeBlock(0, 0);
+                        }
+                    } else if ((ModuleManager.tower.ebDelay == 0 || !ModuleManager.tower.firstVTP)) {
+                        placeBlock(0, 0);
+                        placedVP = true;
+                    }
+                    if (ModuleManager.tower.placeExtraBlock) {
+                        placeBlock(0, -1);
+                    }
+
+                    if (fastScaffoldKeepY && !ModuleManager.tower.canTower()) {
+                        ++keepYTicks;
+                        if ((int) mc.thePlayer.posY > (int) startYPos) {
+                            switch (mode) {
+                                case 1:
+                                    if (!firstKeepYPlace && keepYTicks == 3) {
+                                        placeBlock(1, 0);
+                                        firstKeepYPlace = true;
+                                    }
+                                    break;
+                                case 2:
+                                    if (!firstKeepYPlace && keepYTicks == 8 || keepYTicks == 11) {
+                                        placeBlock(1, 0);
+                                        firstKeepYPlace = true;
+                                    }
+                                    break;
+                                case 3:
+                                    if (!firstKeepYPlace && keepYTicks == 8 || firstKeepYPlace && keepYTicks == 7) {
+                                        placeBlock(1, 0);
+                                        firstKeepYPlace = true;
+                                    }
+                                    break;
+                                case 4:
+                                    if (!firstKeepYPlace && keepYTicks == 7) {
+                                        placeBlock(1, 0);
+                                        firstKeepYPlace = true;
+                                    }
+                                    break;
+                            }
+                        }
+                        if (mc.thePlayer.onGround) keepYTicks = 0;
+                        if ((int) mc.thePlayer.posY == (int) startYPos) firstKeepYPlace = false;
+                    }
+                    handleMotion();
+                }
+            }
+        }
+
+        if (disabledModule) {
+            if (hasPlaced && (towerEdge || floatStarted && Utils.isMoving())) {
+                dontDisable = true;
+            }
+
+            if (dontDisable && ++disableTicks >= 2) {
+                isEnabled = false;
+                //Utils.print("Extra tick");
+            }
+            if (!dontDisable) {
+                isEnabled = false;
+            }
+
+
+            if (!isEnabled) {
+                disabledModule = dontDisable = false;
+                disableTicks = 0;
+
+                if (ModuleManager.tower.speed) {
+                    Utils.setSpeed(Utils.getHorizontalSpeed(mc.thePlayer) / 1.6);
+                }
+
+                if (lastSlot.get() != -1) {
+                    mc.thePlayer.inventory.currentItem = lastSlot.get();
+                    lastSlot.set(-1);
+                }
+                blockSlot = -1;
+                if (autoSwap.isToggled() && ModuleManager.autoSwap.spoofItem.isToggled()) {
+                    ((IMixinItemRenderer) mc.getItemRenderer()).setCancelUpdate(false);
+                    ((IMixinItemRenderer) mc.getItemRenderer()).setCancelReset(false);
+                }
+                if (offsetDelay > 0) {
+                    ModuleManager.sprint.requireJump = false;
+                }
+                scaffoldBlockCount.beginFade();
+                hasSwapped = hasPlaced = false;
+                targetBlock = null;
+                blockInfo = null;
+                blockRotations = null;
+                fastScaffoldKeepY = firstKeepYPlace = rotateForward = rotatingForward = floatStarted = floatJumped = floatWasEnabled = towerEdge =
+                        was451 = was452 = enabledOffGround = finishProcedure = jump = false;
+                rotationDelay = keepYTicks = scaffoldTicks = floatTicks = 0;
+                firstStroke = vlS = 0;
+                startYPos = -1;
+                lookVec = null;
+                lastPlacement = null;
             }
         }
     }
 
-    public void actionPerformed(GuiButton b) {
-        if (b == this.commandLineSend) {
-            Commands.rCMD(this.commandLineInput.getText());
-            this.commandLineInput.setText("");
+    @Override
+    public String getInfo() {
+        String info;
+        if (fastOnRMB.isToggled()) {
+            info = fastOnRMB() ? fastScaffoldModes[(int) fastScaffold.getInput()] : sprintModes[(int) sprint.getInput()];
         }
+        else {
+            info = fastScaffold.getInput() > 0 ? fastScaffoldModes[(int) fastScaffold.getInput()] : sprintModes[(int) sprint.getInput()];
+        }
+        return info;
     }
 
-    @Override
-    public void onGuiClosed() {
-        this.logoSmoothLength = null;
-        if (this.sf != null) {
-            this.sf.cancel(true);
-            this.sf = null;
-        }
-        for (CategoryComponent c : categories) {
-            c.dragging = false;
-            for (Component m : c.getModules()) {
-                m.onGuiClosed();
-            }
-        }
-        this.mc.gameSettings.guiScale = originalScale;
+    public boolean stopFastPlace() {
+        return this.isEnabled();
     }
 
-    @Override
-    public boolean doesGuiPauseGame() {
+    float getAngleDifference(float from, float to) {
+        float difference = (to - from) % 360.0F;
+        if (difference < -180.0F) {
+            difference += 360.0F;
+        } else if (difference >= 180.0F) {
+            difference -= 360.0F;
+        }
+        return difference;
+    }
+
+    public void rotateForward() {
+        rotateForward = true;
+        rotatingForward = false;
+    }
+
+    public boolean blockAbove() {
+        return !(BlockUtils.getBlock(new BlockPos(mc.thePlayer.posX, mc.thePlayer.posY + 2, mc.thePlayer.posZ)) instanceof BlockAir);
+    }
+
+    public boolean sprint() {
+        if (isEnabled) {
+            return handleFastScaffolds() > 0;
+        }
         return false;
     }
 
-    private boolean binding() {
-        for (CategoryComponent c : categories) {
-            for (ModuleComponent m : c.getModules()) {
-                for (Component component : m.settings) {
-                    if (component instanceof BindComponent && ((BindComponent) component).isBinding) {
-                        return true;
+    private int handleFastScaffolds() {
+        if (fastOnRMB.isToggled()) {
+            return fastScaffold.getInput() > 0 && fastOnRMB() ? (int) fastScaffold.getInput() : (int) sprint.getInput();
+        }
+        else {
+            return fastScaffold.getInput() > 0 ? (int) fastScaffold.getInput() : (int) sprint.getInput();
+        }
+    }
+
+    private boolean usingFloat() {
+        return (sprint.getInput() == 2 || sprint.getInput() == 3) && Utils.isMoving() && !usingFastScaffold();
+    }
+
+    public boolean usingFastScaffold() {
+        return fastScaffold.getInput() > 0 && (!fastOnRMB.isToggled() || fastOnRMB() && Utils.tabbedIn()) && !prioritizeSprint();
+    }
+
+    public boolean fastOnRMB() {
+        return fastOnRMB.isToggled() && Utils.tabbedIn() && (Mouse.isButtonDown(1) || ModuleManager.bhop.isEnabled() || defPS());
+    }
+
+    private boolean defPS() {
+        return prioritizeSprintWithSpeed.isToggled() && (sprint.getInput() == 0 || getSpeedLevel() == 0);
+    }
+
+    private boolean prioritizeSprint() {
+        return prioritizeSprintWithSpeed.isToggled() && sprint.getInput() > 0 && getSpeedLevel() > 0 && !fastOnRMB();
+    }
+
+    public boolean safewalk() {
+        return this.isEnabled() && safeWalk.isToggled();
+    }
+
+    public boolean stopRotation() {
+        return this.isEnabled() && rotation.getInput() > 0;
+    }
+
+    private void place(PlaceData block) {
+        ItemStack heldItem = mc.thePlayer.getHeldItem();
+        if (heldItem == null || !(heldItem.getItem() instanceof ItemBlock) || !Utils.canBePlaced((ItemBlock) heldItem.getItem())) {
+            return;
+        }
+        if (mc.playerController.onPlayerRightClick(mc.thePlayer, mc.theWorld, heldItem, block.blockPos, block.enumFacing, block.hitVec)) {
+            if (silentSwing.isToggled()) {
+                mc.thePlayer.sendQueue.addToSendQueue(new C0APacketAnimation());
+            }
+            else {
+                mc.thePlayer.swingItem();
+                if (holdingBlocks()) {
+                    mc.getItemRenderer().resetEquippedProgress();
+                }
+            }
+            if (ModuleManager.tower.placeExtraBlock) {
+                ModuleManager.tower.firstVTP = true;
+            }
+            highlight.put(block.blockPos.offset(block.enumFacing), null);
+            hasPlaced = true;
+        }
+    }
+
+    public boolean canSafewalk() {
+        if (!safeWalk.isToggled()) {
+            return false;
+        }
+        if (usingFastScaffold()) {
+            return false;
+        }
+        if (ModuleManager.tower.canTower()) {
+            return false;
+        }
+        if (!isEnabled) {
+            return false;
+        }
+        return true;
+    }
+
+    public int totalBlocks() {
+        int totalBlocks = 0;
+        for (int i = 0; i < 9; ++i) {
+            final ItemStack stack = mc.thePlayer.inventory.mainInventory[i];
+            if (stack != null && stack.getItem() instanceof ItemBlock && Utils.canBePlaced((ItemBlock) stack.getItem()) && stack.stackSize > 0) {
+                totalBlocks += stack.stackSize;
+            }
+        }
+        return totalBlocks;
+    }
+
+    private void placeBlock(int yOffset, int xOffset) {
+        if (!Utils.nullCheck()) {
+            return;
+        }
+        locateAndPlaceBlock(yOffset, xOffset);
+        int input = (int) multiPlace.getInput();
+        if (input >= 1) {
+            locateAndPlaceBlock(yOffset, xOffset);
+            if (input >= 2) {
+                locateAndPlaceBlock(yOffset, xOffset);
+                if (input >= 3) {
+                    locateAndPlaceBlock(yOffset, xOffset);
+                    if (input >= 4) {
+                        locateAndPlaceBlock(yOffset, xOffset);
                     }
                 }
             }
         }
-        return false;
     }
 
-    public void onSliderChange() {
-        for (CategoryComponent c : categories) {
-            for (ModuleComponent m : c.getModules()) {
-                m.onSliderChange();
+    private void locateAndPlaceBlock(int yOffset, int xOffset) {
+        if (!Utils.nullCheck()) {
+            return;
+        }
+        locateBlocks(yOffset, xOffset);
+        if (blockInfo == null) {
+            return;
+        }
+        lastPlacement = blockInfo;
+        place(blockInfo);
+        blockInfo = null;
+    }
+
+    private void locateBlocks(int yOffset, int xOffset) {
+        List<PlaceData> blocksInfo = findBlocks(yOffset, xOffset);
+
+        if (blocksInfo == null) {
+            return;
+        }
+
+        double sumX = 0, sumY = !mc.thePlayer.onGround ? 0 : blocksInfo.get(0).blockPos.getY(), sumZ = 0;
+        int index = 0;
+        for (PlaceData blockssInfo : blocksInfo) {
+            if (index > 1 || (!Utils.isDiagonal(false) && index > 0 && mc.thePlayer.onGround)) {
+                break;
             }
+            sumX += blockssInfo.blockPos.getX();
+            if (!mc.thePlayer.onGround) {
+                sumY += blockssInfo.blockPos.getY();
+            }
+            sumZ += blockssInfo.blockPos.getZ();
+            index++;
+        }
+
+        double avgX = sumX / index;
+        double avgY = !mc.thePlayer.onGround ? sumY / index : blocksInfo.get(0).blockPos.getY();
+        double avgZ = sumZ / index;
+
+        targetBlock = new Vec3(avgX, avgY, avgZ);
+
+        PlaceData blockInfo2 = blocksInfo.get(0);
+        int blockX = blockInfo2.blockPos.getX();
+        int blockY = blockInfo2.blockPos.getY();
+        int blockZ = blockInfo2.blockPos.getZ();
+        EnumFacing blockFacing = blockInfo2.enumFacing;
+        blockInfo = blockInfo2;
+
+        double hitX = (blockX + 0.5D) + getCoord(blockFacing.getOpposite(), "x") * 0.5D;
+        double hitY = (blockY + 0.5D) + getCoord(blockFacing.getOpposite(), "y") * 0.5D;
+        double hitZ = (blockZ + 0.5D) + getCoord(blockFacing.getOpposite(), "z") * 0.5D;
+        lookVec = new Vec3(0.5D + getCoord(blockFacing.getOpposite(), "x") * 0.5D, 0.5D + getCoord(blockFacing.getOpposite(), "y") * 0.5D, 0.5D + getCoord(blockFacing.getOpposite(), "z") * 0.5D);
+        hitVec = new Vec3(hitX, hitY, hitZ);
+        blockInfo.hitVec = hitVec;
+    }
+
+    private double getCoord(EnumFacing facing, String axis) {
+        switch (axis) {
+            case "x": return (facing == EnumFacing.WEST) ? -0.5 : (facing == EnumFacing.EAST) ? 0.5 : 0;
+            case "y": return (facing == EnumFacing.DOWN) ? -0.5 : (facing == EnumFacing.UP) ? 0.5 : 0;
+            case "z": return (facing == EnumFacing.NORTH) ? -0.5 : (facing == EnumFacing.SOUTH) ? 0.5 : 0;
+        }
+        return 0;
+    }
+
+    private List<PlaceData> findBlocks(int yOffset, int xOffset) {
+        int x = (int) Math.floor(mc.thePlayer.posX + xOffset);
+        int y = (int) Math.floor(((startYPos != -1) ? startYPos : mc.thePlayer.posY) + yOffset);
+        int z = (int) Math.floor(mc.thePlayer.posZ);
+
+        BlockPos base = new BlockPos(x, y - 1, z);
+
+        if (!BlockUtils.replaceable(base)) {
+            return null;
+        }
+
+        EnumFacing[] allFacings = getFacingsSorted();
+        List<EnumFacing> validFacings = new ArrayList<>(5);
+        for (EnumFacing facing : allFacings) {
+            if (facing != EnumFacing.UP && placeConditions(facing, yOffset, xOffset)) {
+                validFacings.add(facing);
+            }
+        }
+        int maxLayer = 1;
+        List<PlaceData> possibleBlocks = new ArrayList<>();
+
+        for (int dy = 1; dy <= maxLayer; dy++) {
+            BlockPos layerBase = new BlockPos(x, y - dy, z);
+            if (dy == 1) {
+                for (EnumFacing facing : validFacings) {
+                    BlockPos neighbor = layerBase.offset(facing);
+                    if (!BlockUtils.replaceable(neighbor) && !BlockUtils.isInteractable(BlockUtils.getBlock(neighbor))) {
+                        possibleBlocks.add(new PlaceData(neighbor, facing.getOpposite()));
+                    }
+                }
+            }
+            for (EnumFacing facing : validFacings) {
+                BlockPos adjacent = layerBase.offset(facing);
+                if (BlockUtils.replaceable(adjacent)) {
+                    for (EnumFacing nestedFacing : validFacings) {
+                        BlockPos nestedNeighbor = adjacent.offset(nestedFacing);
+                        if (!BlockUtils.replaceable(nestedNeighbor) && !BlockUtils.isInteractable(BlockUtils.getBlock(nestedNeighbor))) {
+                            possibleBlocks.add(new PlaceData(nestedNeighbor, nestedFacing.getOpposite()));
+                        }
+                    }
+                }
+            }
+            for (EnumFacing facing : validFacings) {
+                BlockPos adjacent = layerBase.offset(facing);
+                if (BlockUtils.replaceable(adjacent)) {
+                    for (EnumFacing nestedFacing : validFacings) {
+                        BlockPos nestedNeighbor = adjacent.offset(nestedFacing);
+                        if (BlockUtils.replaceable(nestedNeighbor)) {
+                            for (EnumFacing thirdFacing : validFacings) {
+                                BlockPos thirdNeighbor = nestedNeighbor.offset(thirdFacing);
+                                if (!BlockUtils.replaceable(thirdNeighbor) && !BlockUtils.isInteractable(BlockUtils.getBlock(thirdNeighbor))) {
+                                    possibleBlocks.add(new PlaceData(thirdNeighbor, thirdFacing.getOpposite()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return possibleBlocks.isEmpty() ? null : possibleBlocks;
+    }
+
+    private EnumFacing[] getFacingsSorted() {
+        EnumFacing lastFacing = EnumFacing.getHorizontal(MathHelper.floor_double((((IAccessorEntityPlayerSP)mc.thePlayer).getLastReportedYaw() * 4.0F / 360.0F) + 0.5D) & 3);
+
+        EnumFacing perpClockwise = lastFacing.rotateY();
+        EnumFacing perpCounterClockwise = lastFacing.rotateYCCW();
+
+        EnumFacing opposite = lastFacing.getOpposite();
+
+        float yaw = ((IAccessorEntityPlayerSP)mc.thePlayer).getLastReportedYaw() % 360;
+        if (yaw > 180) {
+            yaw -= 360;
+        }
+        else if (yaw < -180) {
+            yaw += 360;
+        }
+
+        float diffClockwise = Math.abs(MathHelper.wrapAngleTo180_float(yaw - getFacingAngle(perpClockwise)));
+        float diffCounterClockwise = Math.abs(MathHelper.wrapAngleTo180_float(yaw - getFacingAngle(perpCounterClockwise)));
+
+        EnumFacing firstPerp, secondPerp;
+        if (diffClockwise <= diffCounterClockwise) {
+            firstPerp = perpClockwise;
+            secondPerp = perpCounterClockwise;
+        }
+        else {
+            firstPerp = perpCounterClockwise;
+            secondPerp = perpClockwise;
+        }
+
+        return new EnumFacing[]{EnumFacing.UP, EnumFacing.DOWN, lastFacing, firstPerp, secondPerp, opposite};
+    }
+
+    private float getFacingAngle(EnumFacing facing) {
+        switch (facing) {
+            case WEST:
+                return 90;
+            case NORTH:
+                return 180;
+            case EAST:
+                return -90;
+            default:
+                return 0;
+        }
+    }
+
+    private boolean placeConditions(EnumFacing enumFacing, int yCondition, int xCondition) {
+        if (xCondition == -1) {
+            if (!ModuleManager.tower.placeExtraBlock) {
+                return enumFacing == EnumFacing.EAST;
+            }
+            else {
+                return enumFacing == EnumFacing.DOWN;
+            }
+        }
+        else if (ModuleManager.tower.placeExtraBlock) {
+            return enumFacing == EnumFacing.WEST;
+        }
+        if (yCondition == 1) {
+            return enumFacing == EnumFacing.DOWN;
+        }
+        return true;
+    }
+
+    /*private boolean allowedFaces(EnumFacing enumFacing) {
+        if (yaw >= 0 && yaw < 90) {
+            //Utils.print("1");
+            //west south
+            return enumFacing == EnumFacing.DOWN || enumFacing == EnumFacing.WEST || enumFacing == EnumFacing.SOUTH;
+        }
+        else if (yaw >= 90 && yaw < 180) {
+            //Utils.print("2");
+            //north west
+            return enumFacing == EnumFacing.DOWN || enumFacing == EnumFacing.NORTH || enumFacing == EnumFacing.WEST;
+        }
+        else if (yaw == 180 || yaw >= -180 && yaw < -90) {
+            //Utils.print("3");
+            //north east
+            return enumFacing == EnumFacing.DOWN || enumFacing == EnumFacing.NORTH || enumFacing == EnumFacing.EAST;
+        }
+        else if (yaw >= -90 && yaw <= 0) {
+            //Utils.print("4");
+            //east south
+            return enumFacing == EnumFacing.DOWN || enumFacing == EnumFacing.EAST || enumFacing == EnumFacing.SOUTH;
+        }
+
+        return false;
+    }*/
+
+    float applyGcd(float value) {
+        float gcd = 0.2F * 0.2F * 0.2F * 8.0F;
+        return (float) ((double) value - (double) value % ((double) gcd * 0.15D));
+    }
+
+    public float getMotionYaw() {
+        return (float) Math.toDegrees(Math.atan2(mc.thePlayer.motionZ, mc.thePlayer.motionX)) - 90.0F;
+    }
+
+    private int getSpeedLevel() {
+        for (PotionEffect potionEffect : mc.thePlayer.getActivePotionEffects()) {
+            if (potionEffect.getEffectName().equals("potion.moveSpeed")) {
+                return potionEffect.getAmplifier() + 1;
+            }
+            return 0;
+        }
+        return 0;
+    }
+
+    double[] speedLevels = {0.48, 0.5, 0.52, 0.58, 0.68};
+
+    double getSpeed(int speedLevel) {
+        if (speedLevel >= 0) {
+            return speedLevels[speedLevel];
+        }
+        return speedLevels[0];
+    }
+
+    double[] floatSpeedLevels = {0.2, 0.22, 0.265, 0.29, 0.3};
+
+    double getFloatSpeed(int speedLevel) {
+        double min = 0;
+        double value = 0;
+        double input = (motion.getInput() / 100);
+        if (mc.thePlayer.moveStrafing != 0 && mc.thePlayer.moveForward != 0) min = 0.003;
+        value = floatSpeedLevels[0] - min;
+        if (speedLevel >= 0) {
+            value = (speedLevel == 2 ? (Utils.scaffoldDiagonal(false) ? 0.265 : 0.275) : floatSpeedLevels[speedLevel]) - min;
+        }
+        value *= input;
+        return value;
+    }
+
+    private void handleMotion() {
+        if (ModuleManager.tower.canTower() && !mc.thePlayer.onGround) {
+            return;
+        }
+        double input = (motion.getInput() / 100);
+        double sex = (motiontwo.getInput() / 100);
+        if (usingFastScaffold()) {
+            mc.thePlayer.motionX *= sex;
+            mc.thePlayer.motionZ *= sex;
+        } else {
+            mc.thePlayer.motionX *= input;
+            mc.thePlayer.motionZ *= input;
+        }
+    }
+
+    public float hardcodedYaw() {
+        float simpleYaw = 0F;
+
+        boolean w = Keyboard.isKeyDown(mc.gameSettings.keyBindForward.getKeyCode());
+        boolean s = Keyboard.isKeyDown(mc.gameSettings.keyBindBack.getKeyCode());
+        boolean a = Keyboard.isKeyDown(mc.gameSettings.keyBindLeft.getKeyCode());
+        boolean d = Keyboard.isKeyDown(mc.gameSettings.keyBindRight.getKeyCode());
+
+        boolean dupe = a & d;
+
+        if (w) {
+            simpleYaw -= 180;
+            if (!dupe) {
+                if (a) simpleYaw += 45;
+                if (d) simpleYaw -= 45;
+            }
+        }
+        else if (!s) {
+            simpleYaw -= 180;
+            if (!dupe) {
+                if (a) simpleYaw += 90;
+                if (d) simpleYaw -= 90;
+            }
+        }
+        else if (!w) {
+            if (!dupe) {
+                if (a) simpleYaw -= 45;
+                if (d) simpleYaw += 45;
+            }
+        }
+        return simpleYaw;
+    }
+
+    public boolean holdingBlocks() {
+        ItemStack heldItem = mc.thePlayer.getHeldItem();
+        if (autoSwap.isToggled() && ModuleManager.autoSwap.spoofItem.isToggled() && lastSlot.get() != mc.thePlayer.inventory.currentItem && totalBlocks() > 0) {
+            ((IMixinItemRenderer) mc.getItemRenderer()).setCancelUpdate(true);
+            ((IMixinItemRenderer) mc.getItemRenderer()).setCancelReset(true);
+        }
+        if (!autoSwap.isToggled() || getSlot() == -1) {
+            if (heldItem == null || !(heldItem.getItem() instanceof ItemBlock) || !Utils.canBePlaced((ItemBlock) heldItem.getItem())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private double getMovementAngle() {
+        double angle = Math.toDegrees(Math.atan2(-mc.thePlayer.moveStrafing, mc.thePlayer.moveForward));
+        return angle == -0 ? 0 : angle;
+    }
+
+    private int getSlot() {
+        int slot = -1;
+        int highestStack = -1;
+        ItemStack heldItem = mc.thePlayer.getHeldItem();
+        for (int i = 0; i < 9; ++i) {
+            final ItemStack itemStack = mc.thePlayer.inventory.mainInventory[i];
+            if (itemStack != null && itemStack.getItem() instanceof ItemBlock && Utils.canBePlaced((ItemBlock) itemStack.getItem()) && itemStack.stackSize > 0) {
+                if (Utils.getBedwarsStatus() == 2 && ((ItemBlock) itemStack.getItem()).getBlock() instanceof BlockTNT) {
+                    continue;
+                }
+                if (itemStack != null && heldItem != null && (heldItem.getItem() instanceof ItemBlock) && Utils.canBePlaced((ItemBlock) heldItem.getItem()) && ModuleManager.autoSwap.sameType.isToggled() && !(itemStack.getItem().getClass().equals(heldItem.getItem().getClass()))) {
+                    continue;
+                }
+                if (itemStack.stackSize > highestStack) {
+                    highestStack = itemStack.stackSize;
+                    slot = i;
+                }
+            }
+        }
+        return slot;
+    }
+
+    public static boolean bypassRots() {
+        return (ModuleManager.scaffold.rotation.getInput() == 2 || ModuleManager.scaffold.rotation.getInput() == 0);
+    }
+
+    public boolean setSlot() {
+        ItemStack heldItem = mc.thePlayer.getHeldItem();
+        int slot = getSlot();
+        if (slot == -1) {
+            return false;
+        }
+        if (blockSlot == -1) {
+            blockSlot = slot;
+        }
+        if (lastSlot.get() == -1) {
+            lastSlot.set(mc.thePlayer.inventory.currentItem);
+        }
+        if (autoSwap.isToggled() && blockSlot != -1) {
+            if (ModuleManager.autoSwap.swapToGreaterStack.isToggled()) {
+                mc.thePlayer.inventory.currentItem = slot;
+                spoofSlot = slot;
+            }
+            else {
+                if (heldItem == null || !(heldItem.getItem() instanceof ItemBlock) || !Utils.canBePlaced((ItemBlock) heldItem.getItem()) || mc.thePlayer.getHeldItem().stackSize <= ModuleManager.autoSwap.swapAt.getInput()) {
+                    mc.thePlayer.inventory.currentItem = slot;
+                    spoofSlot = slot;
+                }
+            }
+        }
+
+        if (heldItem == null || !(heldItem.getItem() instanceof ItemBlock) || !Utils.canBePlaced((ItemBlock) heldItem.getItem())) {
+            blockSlot = -1;
+            return false;
+        }
+        return true;
+    }
+
+
+    static class PlaceData {
+        EnumFacing enumFacing;
+        BlockPos blockPos;
+        Vec3 hitVec;
+
+        PlaceData(BlockPos blockPos, EnumFacing enumFacing) {
+            this.enumFacing = enumFacing;
+            this.blockPos = blockPos;
+        }
+
+        public PlaceData(EnumFacing enumFacing, BlockPos blockPos) {
+            this.enumFacing = enumFacing;
+            this.blockPos = blockPos;
         }
     }
 }
