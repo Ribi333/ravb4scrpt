@@ -1,10 +1,3 @@
-
-/* 
-    Credits: Syuto
-    cryzis
-    jd
-*/
-
 float moveForward, moveStrafing, rotationYaw, yaw, pitch;
 boolean swapped, swap, towering;
 int swapdelay = 0, oldSlot, slot, inAirTicks;
