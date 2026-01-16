@@ -17,6 +17,15 @@ void onDisable() {
     resetState();
 }
 
+void onPreUpdate() {
+    int mode = (int) modules.getSlider(scriptName, "Mode");
+    
+    // Legit mode runs every tick
+    if (mode == 2) {
+        doLegitBlock();
+    }
+}
+
 boolean onPacketSent(CPacket packet) {
     if (packet instanceof C02) {
         C02 c02 = (C02) packet;
@@ -30,22 +39,25 @@ boolean onPacketSent(CPacket packet) {
             
             int mode = (int) modules.getSlider(scriptName, "Mode");
             
-            waitingToBlock = true;
-            currentTarget = target;
-            
-            client.async(() -> {
-                client.sleep(10);
-                if (waitingToBlock) {
-                    if (mode == 0) {
-                        doOptibye();
-                    } else if (mode == 1) {
-                        startPredictBlock();
-                    } else if (mode == 2) {
-                        ribisucksdick = 3;
-                        doLegitBlock();
+            if (mode == 2) {
+                // Legit mode - just set the counter
+                ribisucksdick = 3;
+            } else {
+                // Other modes use async
+                waitingToBlock = true;
+                currentTarget = target;
+                
+                client.async(() -> {
+                    client.sleep(50);
+                    if (waitingToBlock) {
+                        if (mode == 0) {
+                            doOptibye();
+                        } else if (mode == 1) {
+                            startPredictBlock();
+                        }
                     }
-                }
-            });
+                });
+            }
         }
     }
     return true;
@@ -69,18 +81,19 @@ boolean onMouse(int button, boolean state) {
         
         currentTarget = target;
         
-        client.async(() -> {
-            client.sleep(10);
-            if (mode == 0) {
-                doOptibye();
-            } else if (mode == 1) {
-                startPredictBlock();
-            } else if (mode == 2) {
-                ribisucksdick = 3;
-                doLegitBlock();
-            }
-            
-        });
+        if (mode == 2) {
+            // Legit mode
+            ribisucksdick = 3;
+        } else {
+            client.async(() -> {
+                client.sleep(50);
+                if (mode == 0) {
+                    doOptibye();
+                } else if (mode == 1) {
+                    startPredictBlock();
+                }
+            });
+        }
     }
     
     return true;
@@ -143,19 +156,20 @@ void startPredictBlock() {
     resetState();
 }
 
+// Legit mode blocking - runs every tick from onPreUpdate
 void doLegitBlock() {
-    Entity target = modules.getKillAuraTarget();
-
     if (ribisucksdick < 0) return; 
     ribisucksdick--;
 
-    if (ribisucksdick == 1 || ribisucksdick == 1) { 
+    if (ribisucksdick == 1) { 
         keybinds.setPressed("use", true);
+        if (modules.getButton(scriptName, "Debug")) client.print("&a[Legit] Blocking");
     }
 
     if (ribisucksdick == 0) {
         keybinds.setPressed("use", false);
-        ribisucksdick = -1; 
+        ribisucksdick = -1;
+        if (modules.getButton(scriptName, "Debug")) client.print("&7[Legit] Unblocked");
     }
 }
 
@@ -165,6 +179,7 @@ void resetState() {
     waitingToBlock = false;
     currentTarget = null;
     attackStartTime = 0;
+    ribisucksdick = -1;
     keybinds.setPressed("use", false);
 }
 
